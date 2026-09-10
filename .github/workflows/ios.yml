@@ -27,22 +27,32 @@ jobs:
           java-version: 17
           cache: 'gradle'
 
-      - name: Clone Arc repository (provides iOS native libraries)
+      # RoboVM 需要 Arc 仓库提供的 iOS 原生库（libarc-freetype.a）；
+      # settings.gradle 检测到 ../Arc 后会用本地源码构建依赖（官方 CI 同款做法）
+      - name: Clone Arc repository
         run: |
           ARC_HASH=$(grep '^archash=' gradle.properties | cut -d'=' -f2 | tr -d '[:space:]')
-          echo "Using Arc commit: $ARC_HASH"
+          echo "Cloning Arc at commit: $ARC_HASH"
           git clone https://github.com/Anuken/Arc ../Arc
-          git -C ../Arc checkout "$ARC_HASH" || echo "::warning::Failed to checkout $ARC_HASH, using Arc master instead"
+          git -C ../Arc checkout "$ARC_HASH"
 
-      - name: Import signing certificate
-        if: ${{ secrets.IOS_CERTIFICATE_B64 != '' }}
+      # 注意：secrets 上下文不能用在 if 条件里（GitHub Actions 限制），
+      # 因此签名相关的分支判断全部放在脚本内部
+      - name: Set up iOS code signing
         env:
           CERT_B64: ${{ secrets.IOS_CERTIFICATE_B64 }}
           CERT_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          PROFILE_B64: ${{ secrets.IOS_PROVISIONING_PROFILE_B64 }}
         run: |
+          if [ -z "$CERT_B64" ]; then
+            echo "::notice::No signing secrets configured. An unsigned IPA will be built."
+            exit 0
+          fi
+
           KEYCHAIN="build.keychain-db"
-          KEYCHAIN_PASSWORD="ci-$(openssl rand -hex 12)"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 12)"
           echo "$CERT_B64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           security default-keychain -s "$KEYCHAIN"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
@@ -50,31 +60,32 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           rm -f "$RUNNER_TEMP/cert.p12"
 
-      - name: Install provisioning profile
-        if: ${{ secrets.IOS_PROVISIONING_PROFILE_B64 != '' }}
-        env:
-          PROFILE_B64: ${{ secrets.IOS_PROVISIONING_PROFILE_B64 }}
-        run: |
-          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
-          echo "$PROFILE_B64" | base64 --decode > "$HOME/Library/MobileDevice/Provisioning Profiles/build.mobileprovision"
+          if [ -n "$PROFILE_B64" ]; then
+            mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+            echo "$PROFILE_B64" | base64 --decode > "$HOME/Library/MobileDevice/Provisioning Profiles/build.mobileprovision"
+          fi
 
-      - name: Build signed IPA
-        if: ${{ secrets.IOS_CERTIFICATE_B64 != '' }}
+      - name: Build IPA
         env:
           SIGN_IDENTITY: ${{ secrets.IOS_SIGN_IDENTITY }}
           PROVISIONING_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE }}
         run: |
-          ./gradlew ios:createIPA -PnoLocalArc \
-            -PsignIdentity="$SIGN_IDENTITY" \
-            -PprovisioningProfile="$PROVISIONING_PROFILE"
-
-      - name: Build unsigned IPA (no signing secrets configured)
-        if: ${{ secrets.IOS_CERTIFICATE_B64 == '' }}
-        run: ./gradlew ios:createIPA -PnoLocalArc
+          if [ -n "$SIGN_IDENTITY" ] && [ -n "$PROVISIONING_PROFILE" ]; then
+            echo "Building signed IPA..."
+            ./gradlew ios:createIPA \
+              -PsignIdentity="$SIGN_IDENTITY" \
+              -PprovisioningProfile="$PROVISIONING_PROFILE"
+          elif [ -n "$SIGN_IDENTITY" ]; then
+            echo "Building signed IPA (no provisioning profile UUID provided)..."
+            ./gradlew ios:createIPA -PsignIdentity="$SIGN_IDENTITY"
+          else
+            echo "Building unsigned IPA..."
+            ./gradlew ios:createIPA
+          fi
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
           name: Mindustry-ios
-          path: ios/build/robovm/**/*.ipa
+          path: ios/build/**/*.ipa
           if-no-files-found: error

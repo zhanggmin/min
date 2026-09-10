@@ -27,29 +27,35 @@ jobs:
           java-version: 17
           cache: 'gradle'
 
-      - name: Decode signing keystore
-        if: ${{ secrets.ANDROID_KEYSTORE_B64 != '' }}
+      # android 模块的 so 原生库来自 Arc 仓库（localArc 模式，官方 CI 同款做法）
+      - name: Clone Arc repository
+        run: |
+          ARC_HASH=$(grep '^archash=' gradle.properties | cut -d'=' -f2 | tr -d '[:space:]')
+          echo "Cloning Arc at commit: $ARC_HASH"
+          git clone https://github.com/Anuken/Arc ../Arc
+          git -C ../Arc checkout "$ARC_HASH"
+
+      # 注意：secrets 上下文不能用在 if 条件里（GitHub Actions 限制），
+      # 因此是否签名的分支判断放在脚本内部
+      - name: Build APK
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
-        run: echo "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/release.jks"
-
-      - name: Build signed release APK
-        if: ${{ secrets.ANDROID_KEYSTORE_B64 != '' }}
-        env:
-          KEYSTORE_FILE: ${{ runner.temp }}/release.jks
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          ./gradlew android:copyAndroidNatives android:assembleRelease \
-            -PRELEASE_STORE_FILE="$KEYSTORE_FILE" \
-            -PRELEASE_STORE_PASSWORD="$KEYSTORE_PASSWORD" \
-            -PRELEASE_KEY_ALIAS="$KEY_ALIAS" \
-            -PRELEASE_KEY_PASSWORD="$KEY_PASSWORD"
-
-      - name: Build debug APK (no signing secrets configured)
-        if: ${{ secrets.ANDROID_KEYSTORE_B64 == '' }}
-        run: ./gradlew android:copyAndroidNatives android:assembleDebug
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "Building signed release APK..."
+            echo "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/release.jks"
+            ./gradlew android:assembleRelease \
+              -PRELEASE_STORE_FILE="$RUNNER_TEMP/release.jks" \
+              -PRELEASE_STORE_PASSWORD="$KEYSTORE_PASSWORD" \
+              -PRELEASE_KEY_ALIAS="$KEY_ALIAS" \
+              -PRELEASE_KEY_PASSWORD="$KEY_PASSWORD"
+          else
+            echo "::notice::No signing secrets configured. Building debug APK instead."
+            ./gradlew android:assembleDebug
+          fi
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
