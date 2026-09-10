@@ -76,5 +76,6 @@ robovm{
 
     iosSignIdentity = project.properties["signIdentity"]
     iosProvisioningProfile = project.properties["provisioningProfile"]
-    iosSkipSigning = false
+    //未提供签名参数时跳过签名（用于 CI 无证书构建，产出未签名 IPA）
+    iosSkipSigning = !project.hasProperty("signIdentity")
 }
