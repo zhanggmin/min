@@ -27,14 +27,12 @@ jobs:
           java-version: 17
           cache: 'gradle'
 
-      # 配置了 ANDROID_KEYSTORE_B64 等 secrets 时，解码签名证书
       - name: Decode signing keystore
         if: ${{ secrets.ANDROID_KEYSTORE_B64 != '' }}
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
         run: echo "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/release.jks"
 
-      # 有签名 secrets：产出正式签名的 release APK
       - name: Build signed release APK
         if: ${{ secrets.ANDROID_KEYSTORE_B64 != '' }}
         env:
@@ -42,14 +40,13 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: >
-          ./gradlew android:copyAndroidNatives android:assembleRelease
-          -PRELEASE_STORE_FILE="$KEYSTORE_FILE"
-          -PRELEASE_STORE_PASSWORD="$KEYSTORE_PASSWORD"
-          -PRELEASE_KEY_ALIAS="$KEY_ALIAS"
-          -PRELEASE_KEY_PASSWORD="$KEY_PASSWORD"
+        run: |
+          ./gradlew android:copyAndroidNatives android:assembleRelease \
+            -PRELEASE_STORE_FILE="$KEYSTORE_FILE" \
+            -PRELEASE_STORE_PASSWORD="$KEYSTORE_PASSWORD" \
+            -PRELEASE_KEY_ALIAS="$KEY_ALIAS" \
+            -PRELEASE_KEY_PASSWORD="$KEY_PASSWORD"
 
-      # 无签名 secrets：产出 debug 签名的 APK（可直接安装测试）
       - name: Build debug APK (no signing secrets configured)
         if: ${{ secrets.ANDROID_KEYSTORE_B64 == '' }}
         run: ./gradlew android:copyAndroidNatives android:assembleDebug

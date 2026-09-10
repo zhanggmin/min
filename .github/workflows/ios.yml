@@ -27,8 +27,6 @@ jobs:
           java-version: 17
           cache: 'gradle'
 
-      # ios:copyNatives 只从同级 Arc 仓库复制 iOS 原生库（libarc-freetype.a），
-      # 因此必须克隆 Arc 并切换到与 gradle.properties 中 archash 一致的提交
       - name: Clone Arc repository (provides iOS native libraries)
         run: |
           ARC_HASH=$(grep '^archash=' gradle.properties | cut -d'=' -f2 | tr -d '[:space:]')
@@ -36,7 +34,6 @@ jobs:
           git clone https://github.com/Anuken/Arc ../Arc
           git -C ../Arc checkout "$ARC_HASH" || echo "::warning::Failed to checkout $ARC_HASH, using Arc master instead"
 
-      # 配置了签名 secrets 时，导入签名证书到临时钥匙串
       - name: Import signing certificate
         if: ${{ secrets.IOS_CERTIFICATE_B64 != '' }}
         env:
@@ -53,7 +50,6 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           rm -f "$RUNNER_TEMP/cert.p12"
 
-      # 安装描述文件（Provisioning Profile）
       - name: Install provisioning profile
         if: ${{ secrets.IOS_PROVISIONING_PROFILE_B64 != '' }}
         env:
@@ -62,18 +58,16 @@ jobs:
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
           echo "$PROFILE_B64" | base64 --decode > "$HOME/Library/MobileDevice/Provisioning Profiles/build.mobileprovision"
 
-      # 有签名 secrets：产出正式签名的 IPA（可安装到真机 / 上架）
       - name: Build signed IPA
         if: ${{ secrets.IOS_CERTIFICATE_B64 != '' }}
         env:
           SIGN_IDENTITY: ${{ secrets.IOS_SIGN_IDENTITY }}
           PROVISIONING_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE }}
-        run: >
-          ./gradlew ios:createIPA -PnoLocalArc
-          -PsignIdentity="$SIGN_IDENTITY"
-          -PprovisioningProfile="$PROVISIONING_PROFILE"
+        run: |
+          ./gradlew ios:createIPA -PnoLocalArc \
+            -PsignIdentity="$SIGN_IDENTITY" \
+            -PprovisioningProfile="$PROVISIONING_PROFILE"
 
-      # 无签名 secrets：产出未签名 IPA（安装真机前需自行补签）
       - name: Build unsigned IPA (no signing secrets configured)
         if: ${{ secrets.IOS_CERTIFICATE_B64 == '' }}
         run: ./gradlew ios:createIPA -PnoLocalArc
