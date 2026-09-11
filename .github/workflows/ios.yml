@@ -90,18 +90,37 @@ jobs:
           # 关键：新建的 keychain 不会自动加入搜索列表，而 RoboVM 是通过
           # `security find-identity -v -p codesigning`（只搜搜索列表）查找签名身份的，
           # 不执行这一行就会报 "No signing identity found matching '...'"
-          security list-keychains -d -s "$KEYCHAIN"
+          # 注意 -d 必须显式指定 domain 值（user），GitHub 官方文档同款写法
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
 
-          # 用与 RoboVM 相同的方式校验签名身份，尽早失败并给出可读错误
+          # 用与 RoboVM 相同的规则校验签名身份（SigningIdentity.find），
+          # 尽早失败并给出可读错误。匹配规则：身份名前缀、/正则/ 或 SHA-1 指纹
           FIND_OUTPUT="$(security find-identity -v -p codesigning 2>&1)"
           echo "$FIND_OUTPUT"
-          if ! echo "$FIND_OUTPUT" | grep -q '[1-9][0-9]* valid identities found'; then
+          # 提取身份名和指纹（排除 CSSMERR 标记的无效证书，与 RoboVM 的解析一致）
+          NAMES="$(echo "$FIND_OUTPUT" | sed -nE '/CSSMERR_TP_CERT_/d; s/^[[:space:]]*[0-9]+\)[[:space:]]+[0-9A-F]+[[:space:]]+"([^"]*)".*/\1/p')"
+          FPS="$(echo "$FIND_OUTPUT" | sed -nE '/CSSMERR_TP_CERT_/d; s/^[[:space:]]*[0-9]+\)[[:space:]]+([0-9A-F]+).*/\1/p')"
+          if [ -z "$NAMES" ]; then
             echo "::error::No valid codesigning identity in keychain. Check that IOS_CERTIFICATE_B64 is a .p12 containing BOTH the certificate and its private key, and that IOS_CERTIFICATE_PASSWORD is correct."
             exit 1
           fi
-          if [ -n "$SIGN_IDENTITY" ] && ! echo "$FIND_OUTPUT" | grep -qF "\"$SIGN_IDENTITY\""; then
-            echo "::error::IOS_SIGN_IDENTITY does not match any identity in the keychain (see list above). It must match exactly, e.g. 'Apple Distribution: Company Name (TEAM123456)'."
-            exit 1
+          if [ -n "$SIGN_IDENTITY" ]; then
+            MATCHED=0
+            if [ "${SIGN_IDENTITY#/}" != "$SIGN_IDENTITY" ] && [ "${SIGN_IDENTITY%/}" != "$SIGN_IDENTITY" ]; then
+              # /regex/ 形式
+              if echo "$NAMES" | grep -Eq "${SIGN_IDENTITY#/}"; then MATCHED=1; fi
+            elif echo "$NAMES" | awk -v p="$SIGN_IDENTITY" 'index($0, p) == 1 { f = 1; exit } END { exit !f }'; then
+              # 名称前缀匹配（与 RoboVM 的 startsWith 一致）
+              MATCHED=1
+            elif [ "${#SIGN_IDENTITY}" -eq 40 ] && printf '%s\n' "$FPS" | grep -qiF "$SIGN_IDENTITY"; then
+              # SHA-1 指纹匹配
+              MATCHED=1
+            fi
+            if [ "$MATCHED" -ne 1 ]; then
+              echo "::error::IOS_SIGN_IDENTITY matches none of the identities below. RoboVM matches by name PREFIX (e.g. 'Apple Distribution'), /regex/ or SHA-1 fingerprint:"
+              echo "$NAMES"
+              exit 1
+            fi
           fi
 
           if [ -n "$PROFILE_B64" ]; then
