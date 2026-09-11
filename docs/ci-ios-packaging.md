@@ -25,8 +25,6 @@ Checkout → JDK 17 → 克隆 Arc(archash) → 下载 MetalANGLEKit → 下载 
 | `IOS_CERTIFICATE_B64` | 分发证书 .p12 的 base64 | — |
 | `IOS_CERTIFICATE_PASSWORD` | 导出 .p12 时设置的密码 | — |
 | `IOS_PROVISIONING_PROFILE_B64` | 描述文件 .mobileprovision 的 base64 | — |
-| `IOS_SIGN_IDENTITY` | 证书名称 | `Apple Distribution: Company Name (TEAMID)` |
-| `IOS_PROVISIONING_PROFILE` | 描述文件 UUID | `xxxxxxx-xxxx-...` |
 
 生成 base64：
 
@@ -39,11 +37,12 @@ base64 -i profile.mobileprovision > profile.b64
 ```
 
 证书在"钥匙串访问"中导出（选 Apple Distribution 证书，连私钥一起，格式 .p12）；
-描述文件在 developer.apple.com 下载；UUID 可用
-`security cms -D -i profile.mobileprovision` 查看 `UUID` 字段。
+描述文件在 developer.apple.com 下载。Workflow 会从 `.mobileprovision` 自动解析 UUID，
+无需再单独配置 UUID secret。
 
-最小可用配置是 `IOS_CERTIFICATE_B64` + `IOS_CERTIFICATE_PASSWORD` + `IOS_SIGN_IDENTITY`
-（证书），描述文件缺失时 RoboVM 会尝试自动匹配 keychain 中已安装的 profile。
+App Store 可用的签名配置为 `IOS_CERTIFICATE_B64` + `IOS_CERTIFICATE_PASSWORD` +
+`IOS_PROVISIONING_PROFILE_B64`。无需配置 `IOS_SIGN_IDENTITY`：RoboVM 会根据 profile
+中包含的开发者证书自动选择已从 `.p12` 导入的匹配身份。
 
 ---
 
@@ -101,15 +100,20 @@ curl -fsSL -o ios/libs/libarc.a \
 - 创建临时 keychain 并设为默认（避免污染系统钥匙串）
 - `security import` 导入 .p12，授权 `/usr/bin/codesign` 使用
 - `set-key-partition-list` 允许非交互式签名（CI 无弹窗环境必需）
-- 描述文件解压到 `~/Library/MobileDevice/Provisioning Profiles/build.mobileprovision`
+- 校验描述文件的 CMS 内容并自动解析 UUID
+- 描述文件安装到 Xcode 16+ 使用的
+  `~/Library/Developer/Xcode/UserData/Provisioning Profiles/<UUID>.mobileprovision`
+- 将解析出的 UUID 通过 `GITHUB_ENV` 传给后续 RoboVM 构建步骤
+- RoboVM 根据 profile 中的证书指纹自动选择已导入 keychain 的签名身份
 
-未配置 secrets 时打印 notice 并 `exit 0` 跳过（不是失败）。
+证书和 profile 都未配置时打印 notice 并 `exit 0`，产出未签名 IPA；只配置其中一个
+则立即报错，避免误产出无法上传的包。
 
 ### 5. 构建 IPA
 
 ```bash
 # 有完整签名信息
-./gradlew ios:createIPA -PsignIdentity="$SIGN_IDENTITY" -PprovisioningProfile="$PROVISIONING_PROFILE"
+./gradlew ios:createIPA -PprovisioningProfile="$IOS_PROFILE_UUID"
 # 无任何签名信息
 ./gradlew ios:createIPA
 ```
@@ -117,8 +121,8 @@ curl -fsSL -o ios/libs/libarc.a \
 `ios/build.gradle` 中的本地修改：
 
 ```groovy
-//未提供签名参数时跳过签名（用于 CI 无证书构建，产出未签名 IPA）
-iosSkipSigning = !project.hasProperty("signIdentity")
+//profile 存在时自动选择匹配 identity；两个参数都没有时才跳过签名
+iosSkipSigning = !project.hasProperty("signIdentity") && !project.hasProperty("provisioningProfile")
 ```
 
 官方仓库此处是 `iosSkipSigning = false`（强制签名，无证书直接失败）。
@@ -189,6 +193,12 @@ CI 未配置签名 secrets 时产出未签名 IPA，安装前需自行签名：
 
 `java.lang.invoke.StringConcatFactory is a phantom class!` 等警告是 RoboVM
 对 JDK 运行时类的正常提示，不影响构建，可忽略。
+
+### Missing Provisioning Profile / embedded.mobileprovision
+
+确认已配置 `IOS_PROVISIONING_PROFILE_B64`。Workflow 会从该 secret 解码 profile、
+自动解析 UUID 并显式传给 RoboVM；构建后还会检查 IPA 中是否存在
+`Payload/*.app/embedded.mobileprovision`，缺失时在上传 artifact 前直接失败。
 
 ### 更新 archash 后构建失败
 
