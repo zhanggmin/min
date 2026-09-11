@@ -18,7 +18,7 @@ task incrementConfig{
     if(vfile.exists()){
         props.load(new FileInputStream(vfile))
     }else{
-        props['app.id'] = 'dqz.test.app'
+        props['app.id'] = 'dzq.test.app'
         props['app.version'] = '1.0'
         props['app.mainclass'] = 'mindustry.ios.IOSLauncher'
         props['app.executable'] = 'IOSLauncher'
