@@ -68,22 +68,41 @@ jobs:
           CERT_B64: ${{ secrets.IOS_CERTIFICATE_B64 }}
           CERT_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
           PROFILE_B64: ${{ secrets.IOS_PROVISIONING_PROFILE_B64 }}
+          SIGN_IDENTITY: ${{ secrets.IOS_SIGN_IDENTITY }}
         run: |
           if [ -z "$CERT_B64" ]; then
             echo "::notice::No signing secrets configured. An unsigned IPA will be built."
             exit 0
           fi
 
-          KEYCHAIN="build.keychain-db"
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
           KEYCHAIN_PASSWORD="$(openssl rand -hex 12)"
           echo "$CERT_B64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
 
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          security default-keychain -s "$KEYCHAIN"
+          # 禁止空闲自动锁定（默认几分钟无操作就会锁上，锁上后签名阶段会失败）
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$CERT_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           rm -f "$RUNNER_TEMP/cert.p12"
+
+          # 关键：新建的 keychain 不会自动加入搜索列表，而 RoboVM 是通过
+          # `security find-identity -v -p codesigning`（只搜搜索列表）查找签名身份的，
+          # 不执行这一行就会报 "No signing identity found matching '...'"
+          security list-keychains -d -s "$KEYCHAIN"
+
+          # 用与 RoboVM 相同的方式校验签名身份，尽早失败并给出可读错误
+          FIND_OUTPUT="$(security find-identity -v -p codesigning 2>&1)"
+          echo "$FIND_OUTPUT"
+          if ! echo "$FIND_OUTPUT" | grep -q '[1-9][0-9]* valid identities found'; then
+            echo "::error::No valid codesigning identity in keychain. Check that IOS_CERTIFICATE_B64 is a .p12 containing BOTH the certificate and its private key, and that IOS_CERTIFICATE_PASSWORD is correct."
+            exit 1
+          fi
+          if [ -n "$SIGN_IDENTITY" ] && ! echo "$FIND_OUTPUT" | grep -qF "\"$SIGN_IDENTITY\""; then
+            echo "::error::IOS_SIGN_IDENTITY does not match any identity in the keychain (see list above). It must match exactly, e.g. 'Apple Distribution: Company Name (TEAM123456)'."
+            exit 1
+          fi
 
           if [ -n "$PROFILE_B64" ]; then
             mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
