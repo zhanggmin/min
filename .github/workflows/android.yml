@@ -35,6 +35,15 @@ jobs:
           git clone https://github.com/Anuken/Arc ../Arc
           git -C ../Arc checkout "$ARC_HASH"
 
+      # 先单独生成精灵图资源（必须是独立的 gradle 调用）：
+      # tools:pack 完成后会写入 core/build/last_pack_version，
+      # 之后构建时 android 模块的 hasSprites() 返回 true，
+      # 其 whenTaskAdded hack（给 assemble 挂 tools:pack 依赖）不再生效。
+      # 若不这样做，AGP 8 下 tools:pack 会与 minifyDebugWithR8 并行执行，
+      # 导致 "I/O exception while reading base.jar"（R8 读取被并行写入的资源时失败）
+      - name: Generate sprite assets
+        run: ./gradlew tools:pack
+
       # 注意：secrets 上下文不能用在 if 条件里（GitHub Actions 限制），
       # 因此是否签名的分支判断放在脚本内部
       - name: Build APK

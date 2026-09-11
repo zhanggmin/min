@@ -36,6 +36,16 @@ jobs:
           git clone https://github.com/Anuken/Arc ../Arc
           git -C ../Arc checkout "$ARC_HASH"
 
+      # MetalANGLEKit（OpenGL ES -> Metal 转换层）等框架不在 Arc git 仓库中：
+      # 上游 backend-robovm 定义了 extractMetalANGLEKit 任务（从 libgdx/MetalANGLEKit
+      # 官方 release 下载并解压框架到 res/META-INF/robovm/ios/libs/），但该任务
+      # 未挂到常规构建链上，不触发它的话 jar 里没有框架，链接时会报
+      # "ld: framework 'MetalANGLEKit' not found"
+      - name: Fetch MetalANGLEKit frameworks
+        run: |
+          cd ../Arc
+          ./gradlew :backends:backend-robovm:extractMetalANGLEKit --no-daemon
+
       # 注意：secrets 上下文不能用在 if 条件里（GitHub Actions 限制），
       # 因此签名相关的分支判断全部放在脚本内部
       - name: Set up iOS code signing
