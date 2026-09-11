@@ -46,6 +46,21 @@ jobs:
           cd ../Arc
           ./gradlew :backends:backend-robovm:extractMetalANGLEKit --no-daemon
 
+      # Arc 上游提交 f8713450 删除了 natives/natives-ios（"iOS natives are no longer needed"），
+      # 但 backend-robovm 的 Java 代码仍引用其中的原生符号，且 ios/build.gradle 的
+      # copyNatives 任务还在从该目录复制（目录不存在时静默跳过）。官方 robovm.xml 把
+      # <lib>libs/libarc.a</lib> 改成了 <framework>arc</framework>，但从未有任何地方
+      # 提供 arc.framework，CI 上必然报 "ld: framework 'arc' not found"（上游遗留 bug，
+      # Anuken 本地靠删除前遗留的 ios/libs/libarc.a 构建，所以没发现）。
+      # 修复：ios/robovm.xml 已改回 <lib>libs/libarc.a</lib>，此处从 Arc 删除前
+      # 的最后提交（ad320d6d，即 f8713450 的 parent）下载该静态库。
+      - name: Fetch libarc.a (arc iOS static library)
+        run: |
+          mkdir -p ios/libs
+          curl -fsSL -o ios/libs/libarc.a \
+            https://raw.githubusercontent.com/Anuken/Arc/ad320d6da348caa182d1638c640cf9fd4784591e/natives/natives-ios/libs/libarc.a
+          ls -l ios/libs/libarc.a
+
       # 注意：secrets 上下文不能用在 if 条件里（GitHub Actions 限制），
       # 因此签名相关的分支判断全部放在脚本内部
       - name: Set up iOS code signing
