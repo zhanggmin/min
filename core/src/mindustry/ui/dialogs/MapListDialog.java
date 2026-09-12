@@ -54,7 +54,7 @@ public abstract class MapListDialog extends BaseDialog{
         }
     }
 
-    private static class MapViewSettings{
+    public static class MapViewSettings{
         boolean
         showBuiltIn = true,
         showCustom = true,
@@ -66,6 +66,9 @@ public abstract class MapListDialog extends BaseDialog{
         MapPriority priority = MapPriority.recent;
 
         Seq<String> planets = new Seq<>();
+
+        public MapViewSettings(){
+        }
 
         void save(){
             Core.settings.putJson("editormapviewsettings", MapViewSettings.class, this);

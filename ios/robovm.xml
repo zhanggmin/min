@@ -35,15 +35,12 @@
     </forceLinkClasses>
     <libs>
         <lib>z</lib>
-        <!--上游 Arc 已删除 natives/natives-ios（"iOS natives are no longer needed"），
-            但 backend-robovm 的 Java 代码仍引用其中的原生符号（stb_vorbis 等），
-            Android 侧对应的 libarc.so 也仍在打包。因此改回静态库链接方式，
-            libarc.a 由 CI 从 Arc 删除前的最后提交下载到 ios/libs/。-->
-        <lib>libs/libarc.a</lib>
+        <!--Arc core natives are linked as an XCFramework below; FreeType remains static.-->
         <lib>libs/libarc-freetype.a</lib>
     </libs>
     <frameworks>
         <framework>UIKit</framework>
+        <framework>arc</framework>
         <framework>MetalANGLEKit</framework>
 
         <framework>libGLESv2</framework>
@@ -57,4 +54,11 @@
         <framework>AudioToolbox</framework>
         <framework>AVFoundation</framework>
     </frameworks>
+    <frameworkPaths>
+        <path>libs/arc.xcframework/ios-arm64</path>
+        <path>libs/MetalANGLEKit.xcframework/ios-arm64</path>
+        <path>libs/libGLESv2.xcframework/ios-arm64</path>
+        <path>libs/libEGL.xcframework/ios-arm64</path>
+        <path>libs/libfeature_support.xcframework/ios-arm64</path>
+    </frameworkPaths>
 </config>
