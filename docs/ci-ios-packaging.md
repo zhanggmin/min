@@ -41,8 +41,8 @@ base64 -i profile.mobileprovision > profile.b64
 无需再单独配置 UUID secret。
 
 App Store 可用的签名配置为 `IOS_CERTIFICATE_B64` + `IOS_CERTIFICATE_PASSWORD` +
-`IOS_PROVISIONING_PROFILE_B64`。无需配置 `IOS_SIGN_IDENTITY`：RoboVM 会根据 profile
-中包含的开发者证书自动选择已从 `.p12` 导入的匹配身份。
+`IOS_PROVISIONING_PROFILE_B64`。无需配置 `IOS_SIGN_IDENTITY`：Workflow 会比较 profile
+中 `DeveloperCertificates` 与 keychain identity 的 SHA-1 指纹，并将匹配身份传给 RoboVM。
 
 ---
 
@@ -104,7 +104,7 @@ curl -fsSL -o ios/libs/libarc.a \
 - 描述文件安装到 Xcode 16+ 使用的
   `~/Library/Developer/Xcode/UserData/Provisioning Profiles/<UUID>.mobileprovision`
 - 将解析出的 UUID 通过 `GITHUB_ENV` 传给后续 RoboVM 构建步骤
-- RoboVM 根据 profile 中的证书指纹自动选择已导入 keychain 的签名身份
+- Workflow 根据 profile 中的证书指纹自动选择已导入 keychain 的签名身份
 
 证书和 profile 都未配置时打印 notice 并 `exit 0`，产出未签名 IPA；只配置其中一个
 则立即报错，避免误产出无法上传的包。
@@ -113,7 +113,9 @@ curl -fsSL -o ios/libs/libarc.a \
 
 ```bash
 # 有完整签名信息
-./gradlew ios:createIPA -PprovisioningProfile="$IOS_PROFILE_UUID"
+./gradlew ios:createIPA \
+  -PsignIdentity="$IOS_SIGNING_IDENTITY" \
+  -PprovisioningProfile="$IOS_PROFILE_UUID"
 # 无任何签名信息
 ./gradlew ios:createIPA
 ```
@@ -121,7 +123,7 @@ curl -fsSL -o ios/libs/libarc.a \
 `ios/build.gradle` 中的本地修改：
 
 ```groovy
-//profile 存在时自动选择匹配 identity；两个参数都没有时才跳过签名
+//Workflow 自动传入匹配 identity；两个参数都没有时才跳过签名
 iosSkipSigning = !project.hasProperty("signIdentity") && !project.hasProperty("provisioningProfile")
 ```
 
@@ -199,6 +201,12 @@ CI 未配置签名 secrets 时产出未签名 IPA，安装前需自行签名：
 确认已配置 `IOS_PROVISIONING_PROFILE_B64`。Workflow 会从该 secret 解码 profile、
 自动解析 UUID 并显式传给 RoboVM；构建后还会检查 IPA 中是否存在
 `Payload/*.app/embedded.mobileprovision`，缺失时在上传 artifact 前直接失败。
+
+### No signing identity found matching Apple Development
+
+RoboVM 2.3.26 未指定 identity 时只按开发证书名称自动搜索，因而无法选中
+`Apple Distribution`。Workflow 会从 profile 的 `DeveloperCertificates` 计算 SHA-1，
+找到 `.p12` 中的匹配 identity，并通过 `-PsignIdentity` 显式传入，无需配置 secret。
 
 ### 更新 archash 后构建失败
 

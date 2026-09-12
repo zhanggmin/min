@@ -76,7 +76,7 @@ robovm{
 
     iosSignIdentity = project.properties["signIdentity"]
     iosProvisioningProfile = project.properties["provisioningProfile"]
-    // identity 可省略：提供 profile 时 RoboVM 会自动选择与之匹配的证书。
+    // CI 会从 profile 的 DeveloperCertificates 自动计算匹配的 identity 指纹；
     // 两个签名参数都未提供时才跳过签名，供 CI 产出未签名 IPA。
     iosSkipSigning = !project.hasProperty("signIdentity") && !project.hasProperty("provisioningProfile")
 }

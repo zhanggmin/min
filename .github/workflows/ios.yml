@@ -96,12 +96,12 @@ jobs:
           # 注意 -d 必须显式指定 domain 值（user），GitHub 官方文档同款写法
           security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
 
-          # 确认证书和私钥导入成功。具体使用哪个 identity 由 RoboVM 根据
-          # provisioning profile 中的 DeveloperCertificates 自动匹配。
+          # 确认证书和私钥导入成功，并保留有效 identity 的 SHA-1 指纹。
           FIND_OUTPUT="$(security find-identity -v -p codesigning 2>&1)"
           echo "$FIND_OUTPUT"
           # 排除 CSSMERR 标记的无效证书，与 RoboVM 的解析规则一致。
           NAMES="$(echo "$FIND_OUTPUT" | sed -nE '/CSSMERR_TP_CERT_/d; s/^[[:space:]]*[0-9]+\)[[:space:]]+[0-9A-F]+[[:space:]]+"([^"]*)".*/\1/p')"
+          IDENTITY_FINGERPRINTS="$(echo "$FIND_OUTPUT" | sed -nE '/CSSMERR_TP_CERT_/d; s/^[[:space:]]*[0-9]+\)[[:space:]]+([0-9A-F]+).*/\1/p')"
           if [ -z "$NAMES" ]; then
             echo "::error::No valid codesigning identity in keychain. Check that IOS_CERTIFICATE_B64 is a .p12 containing BOTH the certificate and its private key, and that IOS_CERTIFICATE_PASSWORD is correct."
             exit 1
@@ -126,20 +126,52 @@ jobs:
               exit 1
             fi
 
+            # RoboVM 2.3.26 在未显式指定 identity 时只自动搜索开发证书
+            # (Apple Development)，无法自动选中 Apple Distribution。比较 profile
+            # 中 DeveloperCertificates 的 SHA-1 与 keychain identity，找到精确匹配项。
+            PROFILE_FINGERPRINTS="$RUNNER_TEMP/profile-certificate-fingerprints.txt"
+            python3 - "$PROFILE_PLIST" "$PROFILE_FINGERPRINTS" <<'PY'
+          import hashlib
+          import plistlib
+          import sys
+
+          with open(sys.argv[1], "rb") as stream:
+              profile = plistlib.load(stream)
+          with open(sys.argv[2], "w", encoding="utf-8") as stream:
+              for certificate in profile.get("DeveloperCertificates", []):
+                  print(hashlib.sha1(certificate).hexdigest().upper(), file=stream)
+          PY
+
+            MATCHED_IDENTITY=""
+            while IFS= read -r PROFILE_FINGERPRINT; do
+              if printf '%s\n' "$IDENTITY_FINGERPRINTS" | grep -qxF "$PROFILE_FINGERPRINT"; then
+                MATCHED_IDENTITY="$PROFILE_FINGERPRINT"
+                break
+              fi
+            done < "$PROFILE_FINGERPRINTS"
+            if [ -z "$MATCHED_IDENTITY" ]; then
+              echo "::error::The imported .p12 contains no signing identity listed in the provisioning profile. Export the certificate and private key that were used to create this profile."
+              exit 1
+            fi
+
             # RoboVM 2.3.26 同时扫描旧目录和 Xcode 16+ 的新目录；安装到新目录
             # 并使用标准的 UUID 文件名，避免 Xcode 清理旧目录中的 profile。
             PROFILE_DIR="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
             mkdir -p "$PROFILE_DIR"
             cp "$PROFILE_FILE" "$PROFILE_DIR/$PROFILE_UUID.mobileprovision"
             echo "IOS_PROFILE_UUID=$PROFILE_UUID" >> "$GITHUB_ENV"
+            echo "IOS_SIGNING_IDENTITY=$MATCHED_IDENTITY" >> "$GITHUB_ENV"
             echo "Installed provisioning profile: $PROFILE_NAME ($PROFILE_UUID)"
+            echo "Matched signing identity fingerprint: $MATCHED_IDENTITY"
           fi
 
       - name: Build IPA
         run: |
           if [ -n "$IOS_PROFILE_UUID" ]; then
-            echo "Building signed IPA; RoboVM will select the identity matching the profile..."
-            ./gradlew ios:createIPA -PprovisioningProfile="$IOS_PROFILE_UUID"
+            echo "Building signed IPA with the identity matched from the profile..."
+            ./gradlew ios:createIPA \
+              -PsignIdentity="$IOS_SIGNING_IDENTITY" \
+              -PprovisioningProfile="$IOS_PROFILE_UUID"
           else
             echo "Building unsigned IPA..."
             ./gradlew ios:createIPA
