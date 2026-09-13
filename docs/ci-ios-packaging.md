@@ -97,11 +97,17 @@ MetalANGLEKit。随后必须把所有 XCFramework 复制到 `ios/libs`，与 `ro
 ```bash
 # 有完整签名信息
 ./gradlew ios:createIPA \
+  -PappBuild="$BUILD_NUMBER" \
   -PsignIdentity="$IOS_SIGNING_IDENTITY" \
   -PprovisioningProfile="$IOS_PROFILE_UUID"
 # 无任何签名信息
-./gradlew ios:createIPA
+./gradlew ios:createIPA -PappBuild="$BUILD_NUMBER"
 ```
+
+`BUILD_NUMBER` 使用 `40 + GITHUB_RUN_NUMBER`，作为 IPA 的
+`CFBundleVersion`。`GITHUB_RUN_NUMBER` 每次新的 workflow 运行自动加 1，
+因此构建号从已上传的 `40` 之后开始按次递增。CI 通过
+`-PappBuild` 显式注入该值（见第七节错误 -19232）。
 
 `ios/build.gradle` 中的本地修改：
 
@@ -190,6 +196,18 @@ CI 未配置签名 secrets 时产出未签名 IPA，安装前需自行签名：
 RoboVM 2.3.26 未指定 identity 时只按开发证书名称自动搜索，因而无法选中
 `Apple Distribution`。Workflow 会从 profile 的 `DeveloperCertificates` 计算 SHA-1，
 找到 `.p12` 中的匹配 identity，并通过 `-PsignIdentity` 显式传入，无需配置 secret。
+
+### The provided entity includes an attribute with a value that has already been used (-19232)
+
+App Store Connect 要求构建号（`CFBundleVersion`，取自 `ios/robovm.properties` 的
+`app.build`）必须高于该 App 之前上传的值。该文件被 `.gitignore` 忽略，CI 全新检出时
+不存在，原逻辑会退回默认值 `40`，导致每次 CI 产出的构建号相同。
+Workflow 已通过 `-PappBuild` 注入 `40 + GITHUB_RUN_NUMBER` 修复，
+每次新的 workflow 运行会自动加 1。
+
+本地运行 `./gradlew ios:createIPA` 时，`incrementConfig` 会在
+`ios/robovm.properties` 中将上次构建号加 1。如果本地构建号落后于 CI，
+应显式传入更大的值，例如 `./gradlew ios:createIPA -PappBuild=45`。
 
 ### 更新 archash 后构建失败
 

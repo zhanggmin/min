@@ -11,25 +11,33 @@ buildscript{
 apply plugin: "java"
 apply plugin: "robovm"
 
-task incrementConfig{
-    def vfile = file('robovm.properties')
-    def bversion = getBuildVersion()
-    def props = new Properties()
-    if(vfile.exists()){
-        props.load(new FileInputStream(vfile))
-    }else{
-        props['app.id'] = 'dzq.test.app'
-        props['app.version'] = '1.0'
-        props['app.mainclass'] = 'mindustry.ios.IOSLauncher'
-        props['app.executable'] = 'IOSLauncher'
-        props['app.name'] = 'Mindustry'
-    }
+def incrementConfig = tasks.register('incrementConfig'){
+    doLast{
+        def vfile = file('robovm.properties')
+        def bversion = getBuildVersion()
+        def props = new Properties()
+        if(vfile.exists()){
+            vfile.withInputStream{props.load(it)}
+        }else{
+            props['app.id'] = 'dzq.test.app'
+            props['app.version'] = '1.0'
+            props['app.mainclass'] = 'mindustry.ios.IOSLauncher'
+            props['app.executable'] = 'IOSLauncher'
+            props['app.name'] = 'Mindustry'
+        }
 
-    props['app.build'] = (!props.containsKey("app.build") ? 40 : props['app.build'].toInteger() + 1) + ""
-    if(bversion != "custom build"){
-        props['app.version'] = versionNumber + "." + bversion + (bversion.contains(".") ? "" : ".0")
+        //CI 使用 GitHub Actions 的递增运行序号；本地则在上次构建号上加 1。
+        if(project.hasProperty("appBuild")){
+            props['app.build'] = project.property("appBuild").toString()
+        }else{
+            props['app.build'] = (!props.containsKey("app.build") ? 41 : props['app.build'].toInteger() + 1) + ""
+        }
+        if(bversion != "custom build"){
+            props['app.version'] = versionNumber + "." + bversion + (bversion.contains(".") ? "" : ".0")
+        }
+        vfile.withWriter{props.store(it, null)}
+        println "iOS build number (CFBundleVersion): ${props['app.build']}"
     }
-    props.store(vfile.newWriter(), null)
 }
 
 dependencies{
@@ -61,9 +69,13 @@ tasks.register('deploy'){
 }
 
 launchIPhoneSimulator.dependsOn build
+launchIPhoneSimulator.dependsOn incrementConfig
 launchIPadSimulator.dependsOn build
+launchIPadSimulator.dependsOn incrementConfig
 launchIOSDevice.dependsOn build
+launchIOSDevice.dependsOn incrementConfig
 createIPA.dependsOn build
+createIPA.dependsOn incrementConfig
 createIPA.dependsOn copyNatives
 createIPA.dependsOn ":tools:pack"
 createIPA.dependsOn ":core:preGen"

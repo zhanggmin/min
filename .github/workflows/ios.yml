@@ -156,16 +156,21 @@ jobs:
             echo "Matched signing identity fingerprint: $MATCHED_IDENTITY"
           fi
 
+      # GITHUB_RUN_NUMBER 在每次新的 workflow 运行时加 1。加上已上传的
+      # 构建号 40，保证新的 CFBundleVersion 从 41 开始递增。
       - name: Build IPA
         run: |
+          BUILD_NUMBER="$((40 + GITHUB_RUN_NUMBER))"
+          echo "iOS build number (CFBundleVersion): $BUILD_NUMBER"
           if [ -n "$IOS_PROFILE_UUID" ]; then
             echo "Building signed IPA with the identity matched from the profile..."
             ./gradlew ios:createIPA \
+              -PappBuild="$BUILD_NUMBER" \
               -PsignIdentity="$IOS_SIGNING_IDENTITY" \
               -PprovisioningProfile="$IOS_PROFILE_UUID"
           else
             echo "Building unsigned IPA..."
-            ./gradlew ios:createIPA
+            ./gradlew ios:createIPA -PappBuild="$BUILD_NUMBER"
           fi
 
       # 上传前直接检查归档内容，避免到 App Store Connect 才发现 profile 未嵌入。
