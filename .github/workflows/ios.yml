@@ -36,30 +36,21 @@ jobs:
           git clone https://github.com/Anuken/Arc ../Arc
           git -C ../Arc checkout "$ARC_HASH"
 
-      # MetalANGLEKit（OpenGL ES -> Metal 转换层）等框架不在 Arc git 仓库中：
-      # 上游 backend-robovm 定义了 extractMetalANGLEKit 任务（从 libgdx/MetalANGLEKit
-      # 官方 release 下载并解压框架到 res/META-INF/robovm/ios/libs/），但该任务
-      # 未挂到常规构建链上，不触发它的话 jar 里没有框架，链接时会报
-      # "ld: framework 'MetalANGLEKit' not found"
-      - name: Fetch MetalANGLEKit frameworks
+      # arc.xcframework 必须从 archash 锁定的 Arc 源码构建，确保 Java JNI 声明和
+      # 原生符号完全匹配。MetalANGLEKit 等框架由 Arc 的下载任务准备。它们还需要
+      # 复制到 ios/libs，因为 robovm.xml 显式从该目录引用各 XCFramework 的真机切片。
+      - name: Prepare iOS native frameworks
         run: |
           cd ../Arc
-          ./gradlew :backends:backend-robovm:extractMetalANGLEKit --no-daemon
-
-      # Arc 上游提交 f8713450 删除了 natives/natives-ios（"iOS natives are no longer needed"），
-      # 但 backend-robovm 的 Java 代码仍引用其中的原生符号，且 ios/build.gradle 的
-      # copyNatives 任务还在从该目录复制（目录不存在时静默跳过）。官方 robovm.xml 把
-      # <lib>libs/libarc.a</lib> 改成了 <framework>arc</framework>，但从未有任何地方
-      # 提供 arc.framework，CI 上必然报 "ld: framework 'arc' not found"（上游遗留 bug，
-      # Anuken 本地靠删除前遗留的 ios/libs/libarc.a 构建，所以没发现）。
-      # 修复：ios/robovm.xml 已改回 <lib>libs/libarc.a</lib>，此处从 Arc 删除前
-      # 的最后提交（ad320d6d，即 f8713450 的 parent）下载该静态库。
-      - name: Fetch libarc.a (arc iOS static library)
-        run: |
+          ./gradlew :arc-core:jnigenBuildAllIOS \
+            :backends:backend-robovm:extractMetalANGLEKit \
+            --no-daemon
+          cd "$GITHUB_WORKSPACE"
           mkdir -p ios/libs
-          curl -fsSL -o ios/libs/libarc.a \
-            https://raw.githubusercontent.com/Anuken/Arc/ad320d6da348caa182d1638c640cf9fd4784591e/natives/natives-ios/libs/libarc.a
-          ls -l ios/libs/libarc.a
+          cp -R ../Arc/arc-core/build/natives/arc.xcframework ios/libs/
+          cp -R ../Arc/backends/backend-robovm/res/META-INF/robovm/ios/libs/*.xcframework ios/libs/
+          test -f ios/libs/arc.xcframework/ios-arm64/arc.framework/arc
+          test -f ios/libs/MetalANGLEKit.xcframework/ios-arm64/MetalANGLEKit.framework/MetalANGLEKit
 
       # 注意：secrets 上下文不能用在 if 条件里（GitHub Actions 限制），
       # 因此签名相关的分支判断全部放在脚本内部

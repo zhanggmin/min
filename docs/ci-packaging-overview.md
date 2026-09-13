@@ -40,15 +40,14 @@ Java 字节码 → RoboVM 编译器 → LLVM → ARM64 原生机器码 → clang
 
 新版 iOS 已弃用 OpenGL ES，Arc 通过 **MetalANGLEKit**（libgdx 维护）把 OpenGL ES 调用实时翻译为 Metal 调用。该框架不在 git 仓库中，由 CI 构建时下载（详见 iOS 文档）。
 
-### 原生库：libarc.a / libarc-freetype.a
+### 原生库：arc.xcframework / libarc-freetype.a
 
-Arc 中含少量 C/C++ 代码（stb_vorbis 音频解码、freetype 字体栅格化等），预编译为静态库：
+Arc 中含少量 C/C++ 代码（音频解码、freetype 字体栅格化等）：
 
-- iOS：`libarc.a`、`libarc-freetype.a`，由 clang 静态链接进可执行文件
+- iOS：从锁定的 Arc 源码构建 `arc.xcframework`，并链接 `libarc-freetype.a`
 - Android：对应的 `.so` 动态库，打进 APK 的 `jniLibs`
 
-> 注意：上游 Arc 仓库于 2025-11-06 删除了 `natives/natives-ios`（含 `libarc.a`），
-> 但代码仍引用其中的符号，CI 需要从历史提交下载，详见 iOS 文档。
+CI 现场构建 framework，保证其原生符号与 `archash` 锁定的 Java 接口一致。
 
 ### 依赖来源：本地 Arc 源码（localArc 模式）
 
@@ -119,4 +118,4 @@ IPA/APK **不会留在 CI 虚拟机上**（运行结束即销毁），而是作�
 | YAML 续行 `-P...` 被解析成列表项 | `run: >` 折叠块中行首 `-` 是列表语法 | 改用 `run: \|` 字面块 | — |
 | `ld: framework 'MetalANGLEKit' not found` | 下载任务未挂在常规构建链上 | CI 显式执行 `extractMetalANGLEKit` | iOS 文档 |
 | R8 `I/O exception while reading base.jar` | `tools:pack` 与 R8 并行执行冲突 | 先单独执行 `tools:pack` | Android 文档 |
-| `ld: framework 'arc' not found` | 上游删库遗留 bug，无处提供该框架 | 恢复静态库链接 + CI 下载 `libarc.a` | iOS 文档 |
+| `ld: framework 'arc' not found` | workflow 未生成/复制 `arc.xcframework` | 从锁定的 Arc 源码构建并复制 XCFramework | iOS 文档 |

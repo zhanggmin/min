@@ -8,7 +8,7 @@ Workflow 文件：[`.github/workflows/ios.yml`](../.github/workflows/ios.yml)
 ## 一、流程总览
 
 ```
-Checkout → JDK 17 → 克隆 Arc(archash) → 下载 MetalANGLEKit → 下载 libarc.a
+Checkout → JDK 17 → 克隆 Arc(archash) → 构建 arc.xcframework → 下载 MetalANGLEKit
 → 导入签名证书(可选) → 构建 IPA → 上传 artifact
 ```
 
@@ -53,11 +53,17 @@ App Store 可用的签名配置为 `IOS_CERTIFICATE_B64` + `IOS_CERTIFICATE_PASS
 与 Android 相同：克隆到 `../Arc` 并 checkout 到 `gradle.properties` 的 `archash`，
 `settings.gradle` 会 `includeBuild` 切换到本地源码依赖。
 
-### 2. 下载 MetalANGLEKit 框架
+### 2. 准备 iOS 原生框架
 
 ```bash
 cd ../Arc
-./gradlew :backends:backend-robovm:extractMetalANGLEKit --no-daemon
+./gradlew :arc-core:jnigenBuildAllIOS \
+  :backends:backend-robovm:extractMetalANGLEKit \
+  --no-daemon
+cd -
+mkdir -p ios/libs
+cp -R ../Arc/arc-core/build/natives/arc.xcframework ios/libs/
+cp -R ../Arc/backends/backend-robovm/res/META-INF/robovm/ios/libs/*.xcframework ios/libs/
 ```
 
 **背景**：新版 iOS 已弃用 OpenGL ES，Arc 用 MetalANGLEKit（libgdx 维护的
@@ -66,36 +72,13 @@ OpenGL ES → Metal 翻译层）渲染。该框架不在 Arc git 仓库中，由
 libgdx/MetalANGLEKit 官方 release（v1.2.1，带 SHA-256 校验）下载并解压到
 `res/META-INF/robovm/ios/libs/`，随 jar 参与链接。
 
-该任务**没有挂在常规构建链上**，不显式触发就会在链接阶段报
-`ld: framework 'MetalANGLEKit' not found`。
+这两个任务都**没有挂在 Mindustry 的常规构建链上**。第一项从当前 `archash` 对应的
+Arc 源码生成 `arc.xcframework`，避免旧 `libarc.a` 与 Java JNI 声明不匹配；第二项下载
+MetalANGLEKit。随后必须把所有 XCFramework 复制到 `ios/libs`，与 `robovm.xml` 的
+`frameworkPaths` 保持一致，否则会出现 `search path ... not found`，并最终报
+`ld: framework 'arc' not found`。
 
-### 3. 下载 libarc.a（上游遗留 bug 的本地修复）
-
-```bash
-mkdir -p ios/libs
-curl -fsSL -o ios/libs/libarc.a \
-  https://raw.githubusercontent.com/Anuken/Arc/ad320d6da348caa182d1638c640cf9fd4784591e/natives/natives-ios/libs/libarc.a
-```
-
-**背景**（上游 bug，至今存在于官方 master）：
-
-- 2025-11-06 Arc 提交 `f8713450`（"iOS natives are no longer needed"）删除了
-  `natives/natives-ios/`（含 `libarc.a`，Arc 原生 C 代码的 iOS 静态库）
-- 但 `backend-robovm` 的 Java 代码仍引用其中的原生符号（stb_vorbis 解码等），
-  Android 侧对应的 `libarc.so` 也一直在正常打包
-- 同日 Mindustry 把 `ios/robovm.xml` 的 `<lib>libs/libarc.a</lib>` 改成了
-  `<framework>arc</framework>`，但**没有任何地方提供 arc.framework**
-- 官方 CI 因此必然报 `ld: framework 'arc' not found`；Anuken 本地有删除前遗留的
-  `ios/libs/libarc.a`（该目录在 .gitignore 中）所以没发现
-
-**本地仓库的修复**（两处配合）：
-
-1. `ios/robovm.xml`：删掉 `<framework>arc</framework>`，恢复 `<lib>libs/libarc.a</lib>`
-2. CI 从删除前最后一个提交 `ad320d6d`（`f8713450` 的 parent）下载该静态库到 `ios/libs/`
-
-> 若日后更新 `archash` 到修复了该问题的版本，此步骤和 robovm.xml 的改动可以还原。
-
-### 4. 导入签名证书（配置了 secrets 时）
+### 3. 导入签名证书（配置了 secrets 时）
 
 - 创建临时 keychain 并设为默认（避免污染系统钥匙串）
 - `security import` 导入 .p12，授权 `/usr/bin/codesign` 使用
@@ -109,7 +92,7 @@ curl -fsSL -o ios/libs/libarc.a \
 证书和 profile 都未配置时打印 notice 并 `exit 0`，产出未签名 IPA；只配置其中一个
 则立即报错，避免误产出无法上传的包。
 
-### 5. 构建 IPA
+### 4. 构建 IPA
 
 ```bash
 # 有完整签名信息
@@ -133,7 +116,7 @@ iosSkipSigning = !project.hasProperty("signIdentity") && !project.hasProperty("p
 （从 `../Arc/natives/natives-freetype-ios/libs` 复制 `libarc-freetype.a`）、
 `:tools:pack`（精灵图）、`:core:preGen`（版本号/本地化生成）。
 
-### 6. 上传 artifact
+### 5. 上传 artifact
 
 产物路径：`ios/build/**/*.ipa`，artifact 名 `Mindustry-ios`。
 
@@ -153,7 +136,7 @@ iosSkipSigning = !project.hasProperty("signIdentity") && !project.hasProperty("p
 | 组件 | 版本/来源 | 说明 |
 |------|-----------|------|
 | Arc | `gradle.properties` 的 `archash=889dd8880f` | 本地源码依赖（`../Arc`） |
-| libarc.a | Arc 提交 `ad320d6d`（删除前的最后版本） | 6.2MB，历史提交下载 |
+| arc.xcframework | 与 `archash` 相同的 Arc 源码 | CI 现场构建，包含真机 ARM64 切片 |
 | MetalANGLEKit | libgdx/MetalANGLEKit release v1.2.1 | `extractMetalANGLEKit` 任务下载，SHA-256 校验 |
 | RoboVM | `com.mobidevelop.robovm:robovm-gradle-plugin:2.3.26` | AOT 编译器 |
 
@@ -176,16 +159,16 @@ CI 未配置签名 secrets 时产出未签名 IPA，安装前需自行签名：
 
 ### ld: framework 'arc' not found
 
-上游遗留 bug（见第三节步骤 3）。确认：
+确认原生框架准备步骤已成功，并检查：
 
-1. `ios/robovm.xml` 的 `<libs>` 中有 `<lib>libs/libarc.a</lib>`，
-   `<frameworks>` 中**没有** `<framework>arc</framework>`
-2. workflow 中 "Fetch libarc.a" 步骤存在且在 "Build IPA" 之前执行
+1. `ios/libs/arc.xcframework/ios-arm64/arc.framework/arc` 存在
+2. `ios/robovm.xml` 的 `<frameworks>` 中有 `<framework>arc</framework>`，且
+   `frameworkPaths` 指向 `libs/arc.xcframework/ios-arm64`
 
 ### ld: framework 'MetalANGLEKit' not found
 
-确认 "Fetch MetalANGLEKit frameworks" 步骤存在。该任务在 Arc 仓库内执行，
-产物进入 `backend-robovm` 的资源目录，随 jar 参与链接。
+确认 "Prepare iOS native frameworks" 步骤存在。该任务在 Arc 仓库内下载框架，
+并把 XCFramework 复制到 `ios/libs` 后再执行 IPA 构建。
 
 ### Unrecognized named-value: 'secrets'
 
@@ -210,8 +193,5 @@ RoboVM 2.3.26 未指定 identity 时只按开发证书名称自动搜索，因�
 
 ### 更新 archash 后构建失败
 
-`libarc.a` 与 `archash` 指向的代码存在版本对应关系。更新 `archash` 后若上游
-已修复原生库问题（恢复了 natives-ios 或提供了 arc.framework），需同步：
-还原 `robovm.xml` 的 `<lib>` 改动、删除 workflow 中 "Fetch libarc.a" 步骤；
-若未修复，确认 `ad320d6d` 版本的静态库仍与新代码符号兼容（链接阶段报
-`undefined symbols` 即不兼容）。
+`arc.xcframework` 与 `archash` 指向的 Java JNI 声明必须来自同一 Arc 提交。CI 每次都
+从锁定源码重新构建；本地更新 `archash` 后也应重新生成并替换 `ios/libs/arc.xcframework`。
