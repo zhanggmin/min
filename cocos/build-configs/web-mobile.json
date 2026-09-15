@@ -1,0 +1,40 @@
+{
+  "name": "supply-frontier",
+  "platform": "web-mobile",
+  "buildPath": "project://build",
+  "outputName": "web-mobile",
+  "startScene": "ed265a34-d365-4ca5-990f-c979be139a19",
+  "scenes": [
+    {
+      "url": "db://assets/scenes/Boot.scene",
+      "uuid": "ed265a34-d365-4ca5-990f-c979be139a19"
+    },
+    {
+      "url": "db://assets/scenes/Menu.scene",
+      "uuid": "bdac8d49-35cd-42d2-93cc-c6d648210ab1"
+    },
+    {
+      "url": "db://assets/scenes/Battle.scene",
+      "uuid": "a5960d58-cd8f-4982-90e4-0fb4707e8e33"
+    }
+  ],
+  "debug": false,
+  "sourceMaps": true,
+  "md5Cache": false,
+  "orientation": "landscape",
+  "includedModules": [
+    "base",
+    "2d",
+    "ui",
+    "graphics",
+    "gfx-webgl",
+    "gfx-webgl2",
+    "custom-pipeline",
+    "profiler"
+  ],
+  "packages": {
+    "web-mobile": {
+      "orientation": "landscape"
+    }
+  }
+}

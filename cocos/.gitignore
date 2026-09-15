@@ -1,0 +1,10 @@
+/library/
+/temp/
+/local/
+/profiles/
+/build/
+/node_modules/
+/.test-build/
+/.DS_Store
+*.log
+/.local-build/

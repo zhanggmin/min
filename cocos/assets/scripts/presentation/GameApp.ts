@@ -1,0 +1,447 @@
+import {_decorator, Color, Component, director, EventTouch, Graphics, HorizontalTextAlignment, JsonAsset,
+    Label, Layers, Node, ResolutionPolicy, resources, UITransform, Vec3, view} from 'cc';
+import {BuildPlan, BuildingKind, costText, definitions, logisticsKinds, Point, vectors} from '../domain/Content';
+import {MapData, validateMap} from '../domain/MapData';
+import {beltLine, Building, World} from '../domain/World';
+import {Command, GameSession} from '../application/GameSession';
+import {PlatformService} from '../platform/PlatformService';
+
+const {ccclass, property} = _decorator;
+const palette = {bg: '#101a23', panel: '#192833', border: '#2e4552', ink: '#e5efec', muted: '#8da6b0', mint: '#73e0c1', amber: '#edba75', red: '#e78378'};
+const rgba = (hex: string) => new Color().fromHEX(hex);
+const arrows = ['→', '↑', '←', '↓'];
+
+@ccclass('GameApp')
+export class GameApp extends Component {
+    private static readonly mapAssets = new Map<string, JsonAsset>();
+    @property page = 'Boot';
+    private readonly platform = new PlatformService();
+    private session?: GameSession;
+    private world?: World;
+    private board?: Node;
+    private terrain?: Graphics;
+    private drawing?: Graphics;
+    private overlay?: Graphics;
+    private statusLabel?: Label;
+    private inventoryLabel?: Label;
+    private infoLabel?: Label;
+    private objectiveLabel?: Label;
+    private metricLabel?: Label;
+    private pauseLabel?: Label;
+    private titleLabel?: Label;
+    private selected: BuildingKind | 'browse' | 'remove' = 'browse';
+    private selection?: Point;
+    private direction = 0;
+    private plans: BuildPlan[] = [];
+    private dragStart?: Point;
+    private cell = 32;
+    private center = {x: 23, y: 22.5};
+    private gesture = false;
+    private pinchDistance = 0;
+    private cleanup?: () => void;
+    private disposed = false;
+    private loading = false;
+    private stress = false;
+    private invasion = false;
+    private renderTime = 0;
+    private metricTime = 0;
+    private frameSamples: number[] = [];
+    private stepSamples: number[] = [];
+    private elapsed = 0;
+    private toolbarLabels: Array<{kind: BuildingKind; label: Label}> = [];
+
+    onLoad(): void {
+        view.setDesignResolutionSize(1200, 720, ResolutionPolicy.SHOW_ALL);
+        this.cleanup = this.platform.onVisibility(() => {
+            this.session?.clock.pause(); this.plans = []; this.dragStart = undefined;
+        }, () => { this.session?.clock.pause(); this.say('已暂停，点击「继续」恢复。当前原型尚未提供战斗存档。'); });
+    }
+
+    start(): void {
+        this.rect(this.node, 'Background', 0, 0, 1200, 720, palette.bg);
+        if(this.page === 'Boot'){
+            this.text(this.node, 'SUPPLY / FRONTIER', 0, 38, 44, palette.mint, 1000);
+            this.statusLabel = this.text(this.node, '正在准备供给前线…', 0, -26, 20, palette.muted);
+            this.preloadMaps();
+        }else if(this.page === 'Menu') this.menu();
+        else this.loadBattle();
+    }
+
+    private preloadMaps(): void {
+        resources.loadDir('maps', JsonAsset, (error, assets) => {
+            if(this.disposed) return;
+            if(error){
+                this.say('地图资源准备失败，请重试。');
+                this.button('重新加载', 0, -82, 200, 52, () => this.preloadMaps());
+                return;
+            }
+            for(const asset of assets){
+                asset.addRef();
+                GameApp.mapAssets.set(asset.name, asset);
+            }
+            this.go('Menu');
+        });
+    }
+
+    private go(scene: string): void {
+        if(this.loading) return;
+        this.loading = true;
+        director.loadScene(scene, error => {
+            if(error && !this.disposed){ this.loading = false; this.say(`场景加载失败：${error.message}`); }
+        });
+    }
+
+    private menu(): void {
+        this.text(this.node, 'S U P P L Y   /   F R O N T I E R', -260, 258, 18, palette.mint, 580);
+        this.text(this.node, '供给前线', -260, 174, 66, palette.ink, 580);
+        this.text(this.node, '让每一段运输，都通向下一次生存。', -260, 98, 22, palette.muted, 600);
+        this.rect(this.node, 'Mission', -255, -76, 580, 212, palette.panel);
+        this.text(this.node, '01  /  供给起步', -255, -18, 28, palette.ink, 530);
+        this.text(this.node, '接通铜矿与核心，再把煤加工成石墨。\n拖动铺带 · 观察堵塞 · 调整生产线', -255, -86, 20, palette.muted, 530);
+        this.button('进入物流实验场  →', -255, -227, 580, 62, () => {
+            this.platform.write('supply.mode', 'logistics'); this.go('Battle');
+        }, palette.mint, palette.bg);
+        const art = this.make(this.node, 'Factory illustration', 322, 50, 400, 360).addComponent(Graphics);
+        for(let x=-4;x<=4;x++) for(let y=-4;y<=4;y++){
+            art.fillColor = rgba((x+y)%2 ? '#1a2b36' : '#1d303b'); art.roundRect(x*40-17,y*40-17,34,34,4); art.fill();
+        }
+        for(let x=-3;x<=3;x++){
+            art.fillColor = rgba('#476576'); art.roundRect(x*40-15,-15,30,30,5); art.fill();
+            this.arrow(art, x*40, 0, 0, 10, palette.mint);
+        }
+        art.fillColor = rgba(palette.amber); art.rect(-136,-16,32,32); art.fill();
+        art.fillColor = rgba(palette.mint); art.roundRect(102,-20,40,40,6); art.fill();
+        this.text(this.node, '采矿  →  运输  →  加工', 322, -164, 21, palette.muted, 420);
+        this.button('打开压力测试', 322, -227, 340, 62, () => {
+            this.platform.write('supply.mode', 'stress'); this.go('Battle');
+        });
+        this.button('敌袭实验：封路与拆墙', -255, -310, 580, 48, () => {
+            this.platform.write('supply.mode', 'invasion'); this.go('Battle');
+        });
+        this.text(this.node, '开发原型 / 炮塔战斗待接入', 322, -310, 17, palette.muted, 430);
+    }
+
+    private loadBattle(): void {
+        this.invasion = this.platform.read('supply.mode') === 'invasion';
+        const path = this.invasion ? 'maps/pathfinding' : 'maps/logistics';
+        const cached = GameApp.mapAssets.get(this.invasion ? 'pathfinding' : 'logistics') || resources.get(path, JsonAsset);
+        if(cached){
+            this.initializeBattle(cached);
+            return;
+        }
+        this.statusLabel = this.text(this.node, '正在加载地图…', 0, 0, 23, palette.muted, 1100);
+        resources.load(path, JsonAsset, (error, asset) => {
+            if(this.disposed) return;
+            if(error){
+                this.say('地图加载失败，请重试。');
+                this.button('重新加载', 0, -70, 200, 52, () => this.go('Battle'));
+                return;
+            }
+            this.initializeBattle(asset);
+        });
+    }
+
+    private initializeBattle(asset: JsonAsset): void {
+        try {
+            validateMap(asset.json);
+            const map = JSON.parse(JSON.stringify(asset.json)) as MapData;
+            this.stress = this.platform.read('supply.mode') === 'stress';
+            if(this.stress) this.configureStress(map);
+            this.session = new GameSession(map);
+            this.world = this.session.world;
+            this.statusLabel?.node.destroy();
+            this.toolbarLabels = [];
+            this.battleUI();
+        } catch(error){ this.say(`无法载入地图：${String(error)}`); }
+    }
+
+    private configureStress(map: MapData): void {
+        map.width = 96; map.height = 96; map.rocks = []; map.ores = []; map.spawns = [];
+        map.buildings = [{kind: 'core', x: 48, y: 48, direction: 0}];
+        for(let i=0;i<400;i++) map.buildings.push({kind: 'belt', x: 20+i%40, y: 20+Math.floor(i/40), direction: 0});
+        for(let i=0;i<199;i++) map.buildings.push({kind: 'storage', x: 20+i%40, y: 31+Math.floor(i/40), direction: 0});
+        this.center = {x: 40, y: 29}; this.cell = 20;
+    }
+
+    private battleUI(): void {
+        this.text(this.node, '供给前线', -468, 306, 29, palette.ink, 220);
+        this.titleLabel = this.text(this.node, this.stress ? '性能实验 / 合成负载' : this.invasion ? '敌袭 / 封路实验' : '01 / 供给起步', -218, 306, 19, palette.muted, 290);
+        this.inventoryLabel = this.text(this.node, '', 188, 306, 22, palette.mint, 455);
+        this.button('菜单', 514, 306, 100, 46, () => this.go('Menu'));
+        this.objectiveLabel = this.text(this.node, '', -138, 248, 19, palette.muted, 850);
+        this.board = this.make(this.node, 'World viewport', -138, -17, 852, 480);
+        this.terrain = this.make(this.board, 'Terrain', 0, 0, 852, 480).addComponent(Graphics);
+        this.drawing = this.make(this.board, 'Buildings', 0, 0, 852, 480).addComponent(Graphics);
+        this.overlay = this.make(this.board, 'Build preview', 0, 0, 852, 480).addComponent(Graphics);
+        this.board.on(Node.EventType.TOUCH_START, this.touchStart, this);
+        this.board.on(Node.EventType.TOUCH_MOVE, this.touchMove, this);
+        this.board.on(Node.EventType.TOUCH_END, this.touchEnd, this);
+        this.board.on(Node.EventType.TOUCH_CANCEL, () => { this.dragStart = undefined; this.gesture = true; this.pinchDistance = 0; }, this);
+        this.rect(this.node, 'Inspector', 440, -5, 252, 504, palette.panel);
+        this.text(this.node, '建造面板', 440, 215, 22, palette.ink, 220);
+        this.infoLabel = this.text(this.node, '浏览模式\n\n单指拖动地图\n双指缩放\n点击建筑查看状态', 440, 112, 18, palette.muted, 224, 190);
+        this.button('旋转  ↻', 440, -15, 214, 48, () => {
+            this.direction = (this.direction+1)%4;
+            if(this.selected === 'browse' && this.selection) this.submit({type: 'rotate', point: this.selection});
+            if(this.plans.length) this.plans[this.plans.length-1].direction = this.direction;
+            this.describe();
+        });
+        this.button('确认建造', 440, -76, 214, 50, () => {
+            if(this.selected === 'remove' && this.selection) this.submit({type: 'remove', point: this.selection});
+            else {
+                const result = this.world!.checkBuild(this.plans);
+                if(result.ok){
+                    this.submit({type: 'build', plans: this.plans});
+                    this.plans = [];
+                }else this.say(result.message);
+            }
+            this.describe();
+        }, palette.mint, palette.bg);
+        this.button('取消 / 浏览', 440, -135, 214, 46, () => this.choose('browse'));
+        this.pauseLabel = this.button('暂停', 380, -210, 95, 42, () => {
+            if(this.session!.enemies.defeated){ this.go('Battle'); return; }
+            if(this.session!.clock.paused) this.session!.clock.resume(); else this.session!.clock.pause();
+        });
+        this.button('拆除', 500, -210, 95, 42, () => this.choose('remove'));
+        const kinds = this.invasion ? this.world!.map.allowed : logisticsKinds;
+        for(let i=0;i<kinds.length;i++){
+            const kind = kinds[i];
+            const label = this.button(`${definitions[kind].name}\n${costText(kind)}`, -504+i*144, -310, 132, 62, () => this.choose(kind));
+            label.fontSize = 17; label.lineHeight = 24; this.toolbarLabels.push({kind, label});
+        }
+        this.button('－', 330, -310, 55, 56, () => this.zoom(-4));
+        this.button('＋', 397, -310, 55, 56, () => this.zoom(4));
+        this.button('归位', 505, -310, 110, 56, () => {
+            this.center = this.stress ? {x:40,y:29} : {x:23,y:22.5}; this.drawTerrain();
+        });
+        this.statusLabel = this.text(this.node, '', -138, -270, 16, palette.amber, 850);
+        this.metricLabel = this.text(this.node, '', 440, 257, 13, palette.muted, 265);
+        this.say(this.stress ? '600 建筑 / 120 移动标记 / 240 子弹标记；非完整战斗性能。' : this.invasion ? '敌人会攻击挡路建筑。试着建墙或拆墙，观察路线；炮塔尚未开放。' : '两条线路各缺一格：选传送带 → 点击空隙 → 确认建造。');
+        this.drawTerrain(); this.drawWorld(); this.refreshHUD();
+    }
+
+    private choose(kind: BuildingKind | 'browse' | 'remove'): void {
+        this.selected = kind; this.plans = []; this.selection = undefined; this.dragStart = undefined;
+        this.describe();
+        for(const entry of this.toolbarLabels) entry.label.color = rgba(entry.kind === kind ? palette.mint : palette.ink);
+        if(kind === 'remove') this.say('点击要拆除的建筑，再点确认。返还 50% 建材，存货销毁。');
+        else if(kind === 'browse') this.say('单指拖动浏览；点击查看建筑；双指缩放。');
+        else this.say(kind === 'belt' ? '拖动预览整条传送带，确认后统一建造；末端方向可旋转。' : '点击网格预览，再点击确认建造。');
+    }
+
+    private describe(): void {
+        if(!this.infoLabel || !this.world) return;
+        const selectedBuilding = this.selection && this.world.at(this.selection);
+        if(this.selected === 'browse' && selectedBuilding){
+            this.infoLabel.string = `${definitions[selectedBuilding.kind].name}  ${arrows[selectedBuilding.direction]}\n(${selectedBuilding.x}, ${selectedBuilding.y})\n\n${this.world.status(selectedBuilding)}\n生命 ${selectedBuilding.health}/${definitions[selectedBuilding.kind].health}`;
+        }else if(this.selected === 'remove') this.infoLabel.string = `拆除模式\n\n${selectedBuilding ? definitions[selectedBuilding.kind].name : '请选择建筑'}\n返还 50% 建材\n存货销毁`;
+        else if(this.selected !== 'browse'){
+            const result = this.plans.length ? this.world.checkBuild(this.plans) : null;
+            this.infoLabel.string = `${definitions[this.selected].name}  ${arrows[this.direction]}\n${costText(this.selected)} / 个\n\n${result?.message || '请选择位置'}\n${this.selected === 'crafter' ? '2 煤 → 1 石墨 / 2 秒' : ''}`;
+        }else this.infoLabel.string = '浏览模式\n\n单指拖动地图\n双指缩放\n点击建筑查看状态';
+    }
+
+    private local(event: EventTouch): Vec3 {
+        const p = event.getUILocation();
+        return this.board!.getComponent(UITransform)!.convertToNodeSpaceAR(new Vec3(p.x, p.y));
+    }
+    private grid(event: EventTouch): Point {
+        const p = this.local(event);
+        return {x: Math.floor(p.x/this.cell + this.center.x), y: Math.floor(p.y/this.cell + this.center.y)};
+    }
+    private touchStart(event: EventTouch): void {
+        this.gesture = event.getAllTouches().length > 1;
+        this.pinchDistance = 0;
+        this.dragStart = this.grid(event);
+        if(!this.gesture && this.selected !== 'browse' && this.selected !== 'remove') this.preview(this.dragStart);
+    }
+    private touchMove(event: EventTouch): void {
+        const touches = event.getAllTouches();
+        if(touches.length > 1){
+            this.gesture = true; this.plans = [];
+            const a = touches[0].getUILocation(), b = touches[1].getUILocation();
+            const d = Math.hypot(a.x-b.x,a.y-b.y);
+            if(this.pinchDistance > 0){ this.cell = Math.max(16, Math.min(48, this.cell*d/this.pinchDistance)); }
+            this.pinchDistance = d;
+            const delta = event.getUIDelta();
+            this.center.x -= delta.x / this.cell / 2; this.center.y -= delta.y / this.cell / 2;
+            this.clampCamera(); this.drawTerrain(); return;
+        }
+        if(this.gesture) return;
+        if(this.selected === 'browse'){
+            const delta = event.getUIDelta(); this.center.x -= delta.x/this.cell; this.center.y -= delta.y/this.cell;
+            this.clampCamera(); this.drawTerrain();
+        }else if(this.selected !== 'remove') this.preview(this.grid(event));
+    }
+    private touchEnd(event: EventTouch): void {
+        if(!this.gesture){
+            this.selection = this.grid(event);
+            if(this.selected !== 'browse' && this.selected !== 'remove') this.preview(this.selection);
+            this.describe();
+        }
+        this.dragStart = undefined; this.pinchDistance = 0;
+    }
+    private preview(end: Point): void {
+        if(this.selected === 'browse' || this.selected === 'remove') return;
+        this.plans = this.selected === 'belt' && this.dragStart ? beltLine(this.dragStart, end, this.direction)
+            : [{...end, kind: this.selected, direction: this.direction}];
+        this.describe();
+    }
+    private zoom(delta: number): void { this.cell = Math.max(16,Math.min(48,this.cell+delta)); this.drawTerrain(); }
+    private clampCamera(): void {
+        this.center.x = Math.max(0,Math.min(this.world!.map.width,this.center.x));
+        this.center.y = Math.max(0,Math.min(this.world!.map.height,this.center.y));
+    }
+    private screen(p: Point): Point { return {x:(p.x+0.5-this.center.x)*this.cell, y:(p.y+0.5-this.center.y)*this.cell}; }
+    private visible(p: Point): boolean { return Math.abs(p.x) < 426-this.cell/2 && Math.abs(p.y) < 240-this.cell/2; }
+
+    private drawTerrain(): void {
+        if(!this.world || !this.terrain) return;
+        const g = this.terrain; g.clear();
+        g.fillColor = rgba('#0b131a'); g.rect(-426,-240,852,480); g.fill();
+        const halfX = Math.ceil(426/this.cell), halfY = Math.ceil(240/this.cell);
+        for(let y=Math.floor(this.center.y)-halfY;y<=this.center.y+halfY;y++){
+            for(let x=Math.floor(this.center.x)-halfX;x<=this.center.x+halfX;x++){
+                const point = {x,y}, p = this.screen(point);
+                if(!this.world.inBounds(point) || !this.visible(p)) continue;
+                const ore = this.world.ore(point);
+                g.fillColor = rgba(this.world.rock(point) ? '#35454f' : ore === 'copper' ? '#5d4937' : ore === 'coal' ? '#33434d' : (x+y)%2 ? '#192832' : '#1c2d37');
+                g.rect(p.x-this.cell/2+1,p.y-this.cell/2+1,this.cell-2,this.cell-2); g.fill();
+                if(ore){
+                    g.fillColor = rgba(ore === 'copper' ? '#a27c52' : '#677984');
+                    g.circle(p.x-6,p.y+5,3); g.circle(p.x+5,p.y-4,4); g.fill();
+                }
+            }
+        }
+    }
+
+    private drawWorld(): void {
+        if(!this.world || !this.drawing || !this.overlay) return;
+        const g = this.drawing; g.clear();
+        for(const b of this.world.buildings.values()){
+            const p = this.screen(b); if(!this.visible(p)) continue;
+            this.drawBuilding(g, b, p);
+        }
+        for(const enemy of this.session!.enemies.enemies.values()){
+            const p = this.screen(enemy);
+            if(!this.visible(p)) continue;
+            g.fillColor = rgba(enemy.kind === 'armored' ? '#b19cdd' : enemy.kind === 'fast' ? palette.amber : palette.red);
+            g.circle(p.x, p.y, this.cell * (enemy.kind === 'armored' ? 0.3 : 0.22)); g.fill();
+        }
+        if(this.stress){
+            for(let i=0;i<360;i++){
+                const p = this.screen({x: this.center.x + Math.sin(this.elapsed*(i<120 ? 0.5 : 1.7)+i)*10,
+                    y: this.center.y + Math.cos(this.elapsed*0.6+i*1.3)*6});
+                if(!this.visible(p)) continue;
+                g.fillColor = rgba(i<120 ? palette.red : palette.amber); g.circle(p.x,p.y,i<120 ? 4 : 1.8); g.fill();
+            }
+        }
+        const o = this.overlay; o.clear();
+        const valid = this.world.checkBuild(this.plans).ok;
+        o.strokeColor = rgba(valid ? palette.mint : palette.red); o.lineWidth = 2;
+        for(const plan of this.plans){
+            const p = this.screen(plan); if(!this.visible(p)) continue;
+            o.rect(p.x-this.cell/2+2,p.y-this.cell/2+2,this.cell-4,this.cell-4); o.stroke();
+            this.arrow(o,p.x,p.y,plan.direction,this.cell*0.24,valid ? palette.mint : palette.red);
+        }
+        if(this.selection && this.plans.length === 0){
+            const p = this.screen(this.selection);
+            if(this.visible(p)){ o.strokeColor = rgba(palette.amber); o.rect(p.x-this.cell/2,p.y-this.cell/2,this.cell,this.cell); o.stroke(); }
+        }
+    }
+
+    private drawBuilding(g: Graphics, b: Building, p: Point): void {
+        const size = this.cell*0.78;
+        g.fillColor = rgba(definitions[b.kind].color); g.roundRect(p.x-size/2,p.y-size/2,size,size,3); g.fill();
+        g.strokeColor = rgba('#15232d'); g.lineWidth = 2;
+        if(b.kind === 'core'){
+            g.rect(p.x-size*0.28,p.y-size*0.28,size*0.56,size*0.56); g.stroke();
+            g.fillColor = rgba('#e5fff3'); g.circle(p.x,p.y,size*0.12); g.fill();
+        }else if(b.kind === 'drill'){
+            g.moveTo(p.x-size*0.3,p.y-size*0.3); g.lineTo(p.x+size*0.3,p.y+size*0.3);
+            g.moveTo(p.x+size*0.3,p.y-size*0.3); g.lineTo(p.x-size*0.3,p.y+size*0.3); g.stroke();
+        }else if(b.kind === 'junction'){
+            g.moveTo(p.x-size*.4,p.y);g.lineTo(p.x+size*.4,p.y);g.moveTo(p.x,p.y-size*.4);g.lineTo(p.x,p.y+size*.4);g.stroke();
+        }else if(b.kind === 'crafter' || b.kind === 'router'){
+            g.circle(p.x,p.y,size*0.26); g.stroke();
+        }else this.arrow(g,p.x,p.y,b.direction,size*0.27,'#203746');
+        if(b.health < definitions[b.kind].health){
+            g.fillColor = rgba(palette.red); g.rect(p.x-size/2, p.y+size/2+2, size, 3); g.fill();
+            g.fillColor = rgba(palette.mint); g.rect(p.x-size/2, p.y+size/2+2, size*b.health/definitions[b.kind].health, 3); g.fill();
+        }
+        const count = Math.min(3,b.cargo.length+b.output);
+        for(let i=0;i<count;i++){
+            const item = b.cargo[i]?.item || 'graphite';
+            g.fillColor = rgba(item === 'copper' ? '#ffd99e' : item === 'coal' ? '#111b23' : '#dbf4ee');
+            g.circle(p.x-6+i*6,p.y-size*0.32,2);g.fill();
+        }
+    }
+
+    private arrow(g: Graphics,x:number,y:number,direction:number,size:number,color:string): void {
+        const v=vectors[direction], side={x:-v.y,y:v.x}; g.strokeColor=rgba(color);g.lineWidth=2;
+        g.moveTo(x-v.x*size,y-v.y*size);g.lineTo(x+v.x*size,y+v.y*size);
+        g.moveTo(x+side.x*size*.6,y+side.y*size*.6);g.lineTo(x+v.x*size,y+v.y*size);
+        g.lineTo(x-side.x*size*.6,y-side.y*size*.6);g.stroke();
+    }
+
+    update(delta: number): void {
+        if(!this.world) return;
+        const start = performance.now();
+        const steps = this.session!.advance(delta, result => { this.say(result.message); this.describe(); });
+        if(steps) this.stepSamples.push((performance.now()-start)/steps);
+        this.frameSamples.push(delta*1000);
+        if(this.frameSamples.length > 600) this.frameSamples.shift();
+        if(this.stepSamples.length > 600) this.stepSamples.shift();
+        if(!this.session!.clock.paused) this.elapsed += delta;
+        this.renderTime += delta; this.metricTime += delta;
+        if(this.renderTime >= 0.05){ this.renderTime=0; this.drawWorld(); this.refreshHUD(); }
+        if(this.metricTime >= 1){
+            this.metricTime=0;
+            const p95 = (samples:number[]) => [...samples].sort((a,b)=>a-b)[Math.floor(samples.length*.95)] || 0;
+            this.metricLabel!.string=`帧 P95 ${p95(this.frameSamples).toFixed(1)}ms · 逻辑 ${p95(this.stepSamples).toFixed(2)}ms`;
+        }
+    }
+
+    private refreshHUD(): void {
+        const world = this.world!;
+        this.inventoryLabel!.string = `铜 ${world.inventory.copper}    煤 ${world.inventory.coal}    石墨 ${world.inventory.graphite}`;
+        this.pauseLabel!.string = this.session!.enemies.defeated ? '重开' : this.session!.clock.paused ? '继续' : '暂停';
+        if(this.stress) this.objectiveLabel!.string = `压力原型 · ${world.buildings.size} 建筑 · 120 移动标记 · 240 子弹标记`;
+        else if(this.invasion){
+            const session = this.session!, waves = session.waves;
+            this.objectiveLabel!.string = session.enemies.defeated ? '核心已被摧毁 · 点击「重开」再次实验'
+                : `核心 ${session.enemies.core.health} · 敌人 ${session.enemies.enemies.size}/120 · ${waves.complete ? '全部敌人已出生' : `波次 ${waves.waveIndex+1}/${waves.waves.length} · 下次出生 ${(waves.remainingTicks/20).toFixed(1)}秒`}`;
+        }else {
+            const copper = Math.min(10,world.delivered.copper), graphite = Math.min(3,world.produced.graphite);
+            this.objectiveLabel!.string = `目标 ① 铜送入核心 ${copper}/10    ② 生产石墨 ${graphite}/3${copper===10&&graphite===3 ? '    ✓ 供给链已建立' : ''}`;
+        }
+        if(this.selected==='browse' && this.selection) this.describe();
+    }
+
+    private submit(command: Command): void {
+        if(this.session!.enemies.defeated){ this.say('核心已被摧毁，请重开。'); return; }
+        this.session!.enqueue(command);
+        this.say(this.session!.clock.paused ? '操作已排队，点击「继续」后执行。' : '操作已提交');
+    }
+    private say(message: string): void { if(this.statusLabel) this.statusLabel.string = message; }
+    private make(parent:Node,name:string,x:number,y:number,width:number,height:number):Node {
+        const node=new Node(name);node.layer=Layers.Enum.UI_2D;node.setParent(parent);node.setPosition(x,y,0);
+        node.addComponent(UITransform).setContentSize(width,height);return node;
+    }
+    private rect(parent:Node,name:string,x:number,y:number,width:number,height:number,color:string):Node {
+        const n=this.make(parent,name,x,y,width,height), g=n.addComponent(Graphics);
+        g.fillColor=rgba(color);g.roundRect(-width/2,-height/2,width,height,8);g.fill();return n;
+    }
+    private text(parent:Node,value:string,x:number,y:number,size:number,color:string,width=600,height=100):Label {
+        const label=this.make(parent,'Text',x,y,width,height).addComponent(Label);
+        label.string=value;label.fontSize=size;label.lineHeight=size*1.45;label.color=rgba(color);
+        label.horizontalAlign=HorizontalTextAlignment.CENTER;label.verticalAlign=Label.VerticalAlign.CENTER;
+        label.overflow=Label.Overflow.SHRINK;label.enableWrapText=true;return label;
+    }
+    private button(value:string,x:number,y:number,width:number,height:number,callback:()=>void,color=palette.border,ink=palette.ink):Label {
+        const node=this.rect(this.node,value,x,y,width,height,color);
+        const label=this.text(node,value,0,0,19,ink,width-10,height-4);
+        node.on(Node.EventType.TOUCH_END,(event:EventTouch)=>{event.propagationStopped=true;callback();});return label;
+    }
+    onDestroy(): void { this.disposed=true;this.cleanup?.();this.unscheduleAllCallbacks(); }
+}
