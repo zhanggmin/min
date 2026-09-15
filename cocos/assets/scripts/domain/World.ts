@@ -10,6 +10,7 @@ export interface Building extends BuildPlan {
     crafting: boolean;
     output: number;
     cursor: number;
+    reload: number;
 }
 export interface Result { ok: boolean; message: string }
 interface Transfer { source: Building; target: Building; cargo?: Cargo; item: Item; direction: number }
@@ -53,7 +54,7 @@ export class World {
     ore(p: Point): Item | undefined { return this.ores.get(this.index(p)); }
     rock(p: Point): boolean { return this.rocks.has(this.index(p)); }
     private insert(plan: BuildPlan): void {
-        const b: Building = {...plan, id: this.nextId++, health: definitions[plan.kind].health, cargo: [], progress: 0, crafting: false, output: 0, cursor: 0};
+        const b: Building = {...plan, id: this.nextId++, health: definitions[plan.kind].health, cargo: [], progress: 0, crafting: false, output: 0, cursor: 0, reload: 0};
         this.buildings.set(b.id, b);
         this.occupied[this.index(b)] = b.id;
     }
@@ -240,6 +241,10 @@ export class World {
     status(b: Building): string {
         if(b.kind === 'core') return '收到的物品成为可用建材';
         if(b.kind === 'crafter') return b.output >= 4 ? '输出已满' : b.crafting ? `加工 ${Math.floor(b.progress / 40 * 100)}%` : '缺料：需要 2 煤 → 1 石墨';
+        if(b.kind === 'turret' || b.kind === 'heavyTurret'){
+            const ammo = b.kind === 'turret' ? 'copper' : 'graphite';
+            return b.cargo.some(cargo => cargo.item === ammo) ? `弹药 ${b.cargo.length}/${definitions[b.kind].capacity}` : `缺弹：需要${b.kind === 'turret' ? '铜' : '石墨'}`;
+        }
         if(b.cargo.length >= definitions[b.kind].capacity) return '缓存已满，请检查下游';
         if(b.kind === 'drill') return `采集 ${this.ore(b) === 'copper' ? '铜' : '煤'} · 每秒 1 个`;
         return `缓存 ${b.cargo.length}/${definitions[b.kind].capacity} · 箭头为输出方向`;

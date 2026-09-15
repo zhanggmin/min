@@ -10,7 +10,13 @@
     "coal": 0,
     "graphite": 0
   },
-  "ores": [],
+  "ores": [
+    {
+      "x": 23,
+      "y": 22,
+      "item": "copper"
+    }
+  ],
   "rocks": [
     {
       "x": 22,
@@ -230,7 +236,9 @@
   "allowed": [
     "wall",
     "belt",
-    "storage"
+    "storage",
+    "turret",
+    "heavyTurret"
   ],
   "buildings": [
     {
@@ -243,6 +251,42 @@
       "kind": "wall",
       "x": 25,
       "y": 24,
+      "direction": 0
+    },
+    {
+      "kind": "drill",
+      "x": 23,
+      "y": 22,
+      "direction": 0
+    },
+    {
+      "kind": "belt",
+      "x": 24,
+      "y": 22,
+      "direction": 0
+    },
+    {
+      "kind": "belt",
+      "x": 25,
+      "y": 22,
+      "direction": 0
+    },
+    {
+      "kind": "belt",
+      "x": 26,
+      "y": 22,
+      "direction": 0
+    },
+    {
+      "kind": "belt",
+      "x": 27,
+      "y": 22,
+      "direction": 0
+    },
+    {
+      "kind": "turret",
+      "x": 28,
+      "y": 22,
       "direction": 0
     }
   ],

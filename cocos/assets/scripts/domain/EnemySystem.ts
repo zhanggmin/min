@@ -3,10 +3,10 @@ import {DistanceField} from './DistanceField';
 import {EnemyKind, WaveDefinition} from './WaveScheduler';
 import {Building, World} from './World';
 
-export const enemyDefinitions: Record<EnemyKind, {speed: number; health: number; damage: number; attackTicks: number}> = {
-    normal: {speed: 1.6, health: 60, damage: 12, attackTicks: 20},
-    fast: {speed: 2.8, health: 35, damage: 7, attackTicks: 14},
-    armored: {speed: 0.9, health: 180, damage: 25, attackTicks: 30}
+export const enemyDefinitions: Record<EnemyKind, {speed: number; health: number; armor: number; damage: number; attackTicks: number}> = {
+    normal: {speed: 1.6, health: 60, armor: 0, damage: 12, attackTicks: 20},
+    fast: {speed: 2.8, health: 35, armor: 0, damage: 7, attackTicks: 14},
+    armored: {speed: 0.9, health: 180, armor: 10, damage: 25, attackTicks: 30}
 };
 export interface Enemy extends Point {
     id: number;
@@ -41,6 +41,21 @@ export class EnemySystem {
         this.enemies.set(enemy.id, enemy);
         this.world.unitCells.add(cell);
         return true;
+    }
+
+    /** Returns applied damage. A lethal hit releases both movement reservations exactly once. */
+    damage(id: number, amount: number, armorPiercing = 0): number {
+        const enemy = this.enemies.get(id);
+        if(!enemy || !Number.isFinite(amount) || amount <= 0 || !Number.isFinite(armorPiercing)) return 0;
+        const armor = Math.max(0, enemyDefinitions[enemy.kind].armor - Math.max(0, armorPiercing));
+        const applied = Math.min(enemy.health, Math.max(1, amount - armor));
+        enemy.health -= applied;
+        if(enemy.health === 0){
+            this.enemies.delete(id);
+            this.world.unitCells.delete(enemy.cell);
+            this.world.unitCells.delete(enemy.target);
+        }
+        return applied;
     }
 
     step(): void {

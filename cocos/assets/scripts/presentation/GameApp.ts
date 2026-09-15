@@ -5,6 +5,7 @@ import {MapData, validateMap} from '../domain/MapData';
 import {beltLine, Building, World} from '../domain/World';
 import {Command, GameSession} from '../application/GameSession';
 import {PlatformService} from '../platform/PlatformService';
+import {enemyDefinitions} from '../domain/EnemySystem';
 
 const {ccclass, property} = _decorator;
 const palette = {bg: '#101a23', panel: '#192833', border: '#2e4552', ink: '#e5efec', muted: '#8da6b0', mint: '#73e0c1', amber: '#edba75', red: '#e78378'};
@@ -48,6 +49,7 @@ export class GameApp extends Component {
     private frameSamples: number[] = [];
     private stepSamples: number[] = [];
     private elapsed = 0;
+    private lastWavesStarted = false;
     private toolbarLabels: Array<{kind: BuildingKind; label: Label}> = [];
 
     onLoad(): void {
@@ -97,8 +99,8 @@ export class GameApp extends Component {
         this.text(this.node, '让每一段运输，都通向下一次生存。', -260, 98, 22, palette.muted, 600);
         this.rect(this.node, 'Mission', -255, -76, 580, 212, palette.panel);
         this.text(this.node, '01  /  供给起步', -255, -18, 28, palette.ink, 530);
-        this.text(this.node, '接通铜矿与核心，再把煤加工成石墨。\n拖动铺带 · 观察堵塞 · 调整生产线', -255, -86, 20, palette.muted, 530);
-        this.button('进入物流实验场  →', -255, -227, 580, 62, () => {
+        this.text(this.node, '补齐三条供给线，为核心与两座炮塔备货。\n供给完成后抵御两波敌袭', -255, -86, 20, palette.muted, 530);
+        this.button('开始第一关  →', -255, -227, 580, 62, () => {
             this.platform.write('supply.mode', 'logistics'); this.go('Battle');
         }, palette.mint, palette.bg);
         const art = this.make(this.node, 'Factory illustration', 322, 50, 400, 360).addComponent(Graphics);
@@ -118,7 +120,7 @@ export class GameApp extends Component {
         this.button('敌袭实验：封路与拆墙', -255, -310, 580, 48, () => {
             this.platform.write('supply.mode', 'invasion'); this.go('Battle');
         });
-        this.text(this.node, '开发原型 / 炮塔战斗待接入', 322, -310, 17, palette.muted, 430);
+        this.text(this.node, '开发原型 / 炮塔与弹药战斗已接入', 322, -310, 17, palette.muted, 430);
     }
 
     private loadBattle(): void {
@@ -149,6 +151,7 @@ export class GameApp extends Component {
             if(this.stress) this.configureStress(map);
             this.session = new GameSession(map);
             this.world = this.session.world;
+            this.lastWavesStarted = this.session.wavesStarted;
             this.statusLabel?.node.destroy();
             this.toolbarLabels = [];
             this.battleUI();
@@ -199,11 +202,11 @@ export class GameApp extends Component {
         }, palette.mint, palette.bg);
         this.button('取消 / 浏览', 440, -135, 214, 46, () => this.choose('browse'));
         this.pauseLabel = this.button('暂停', 380, -210, 95, 42, () => {
-            if(this.session!.enemies.defeated){ this.go('Battle'); return; }
+            if(this.session!.outcome !== 'playing'){ this.go('Battle'); return; }
             if(this.session!.clock.paused) this.session!.clock.resume(); else this.session!.clock.pause();
         });
         this.button('拆除', 500, -210, 95, 42, () => this.choose('remove'));
-        const kinds = this.invasion ? this.world!.map.allowed : logisticsKinds;
+        const kinds = this.stress ? logisticsKinds : this.world!.map.allowed;
         for(let i=0;i<kinds.length;i++){
             const kind = kinds[i];
             const label = this.button(`${definitions[kind].name}\n${costText(kind)}`, -504+i*144, -310, 132, 62, () => this.choose(kind));
@@ -216,7 +219,7 @@ export class GameApp extends Component {
         });
         this.statusLabel = this.text(this.node, '', -138, -270, 16, palette.amber, 850);
         this.metricLabel = this.text(this.node, '', 440, 257, 13, palette.muted, 265);
-        this.say(this.stress ? '600 建筑 / 120 移动标记 / 240 子弹标记；非完整战斗性能。' : this.invasion ? '敌人会攻击挡路建筑。试着建墙或拆墙，观察路线；炮塔尚未开放。' : '两条线路各缺一格：选传送带 → 点击空隙 → 确认建造。');
+        this.say(this.stress ? '600 建筑 / 120 移动标记 / 240 子弹标记；非完整战斗性能。' : this.invasion ? '钻头会把铜送进炮塔；断开弹药线可观察停火，也可建墙改变敌人路线。' : '三条供给线各缺一格：选择传送带，补齐核心、普通炮塔和重型炮塔的线路。');
         this.drawTerrain(); this.drawWorld(); this.refreshHUD();
     }
 
@@ -327,6 +330,16 @@ export class GameApp extends Component {
             if(!this.visible(p)) continue;
             g.fillColor = rgba(enemy.kind === 'armored' ? '#b19cdd' : enemy.kind === 'fast' ? palette.amber : palette.red);
             g.circle(p.x, p.y, this.cell * (enemy.kind === 'armored' ? 0.3 : 0.22)); g.fill();
+            const health = enemyDefinitions[enemy.kind].health;
+            if(enemy.health < health){
+                g.fillColor = rgba('#481f25'); g.rect(p.x-this.cell*.3,p.y+this.cell*.31,this.cell*.6,3); g.fill();
+                g.fillColor = rgba(palette.mint); g.rect(p.x-this.cell*.3,p.y+this.cell*.31,this.cell*.6*enemy.health/health,3); g.fill();
+            }
+        }
+        for(const bullet of this.session!.combat.bullets.values()){
+            const p = this.screen(bullet); if(!this.visible(p)) continue;
+            g.fillColor = rgba(bullet.kind === 'heavyTurret' ? '#dffbf4' : '#ffd99e');
+            g.circle(p.x, p.y, bullet.kind === 'heavyTurret' ? 3.2 : 2.3); g.fill();
         }
         if(this.stress){
             for(let i=0;i<360;i++){
@@ -364,6 +377,10 @@ export class GameApp extends Component {
             g.moveTo(p.x-size*.4,p.y);g.lineTo(p.x+size*.4,p.y);g.moveTo(p.x,p.y-size*.4);g.lineTo(p.x,p.y+size*.4);g.stroke();
         }else if(b.kind === 'crafter' || b.kind === 'router'){
             g.circle(p.x,p.y,size*0.26); g.stroke();
+        }else if(b.kind === 'turret' || b.kind === 'heavyTurret'){
+            const scale = b.kind === 'heavyTurret' ? 0.34 : 0.27;
+            g.circle(p.x,p.y,size*scale); g.stroke();
+            g.moveTo(p.x,p.y); g.lineTo(p.x+size*.38,p.y); g.stroke();
         }else this.arrow(g,p.x,p.y,b.direction,size*0.27,'#203746');
         if(b.health < definitions[b.kind].health){
             g.fillColor = rgba(palette.red); g.rect(p.x-size/2, p.y+size/2+2, size, 3); g.fill();
@@ -388,6 +405,11 @@ export class GameApp extends Component {
         if(!this.world) return;
         const start = performance.now();
         const steps = this.session!.advance(delta, result => { this.say(result.message); this.describe(); });
+        // 只在教学门槛第一次达成时提示，避免每个渲染帧重复覆盖玩家操作反馈。
+        if(!this.lastWavesStarted && this.session!.wavesStarted){
+            this.lastWavesStarted = true;
+            this.say('供给准备完成！第一波敌袭倒计时已经开始。');
+        }
         if(steps) this.stepSamples.push((performance.now()-start)/steps);
         this.frameSamples.push(delta*1000);
         if(this.frameSamples.length > 600) this.frameSamples.shift();
@@ -405,12 +427,20 @@ export class GameApp extends Component {
     private refreshHUD(): void {
         const world = this.world!;
         this.inventoryLabel!.string = `铜 ${world.inventory.copper}    煤 ${world.inventory.coal}    石墨 ${world.inventory.graphite}`;
-        this.pauseLabel!.string = this.session!.enemies.defeated ? '重开' : this.session!.clock.paused ? '继续' : '暂停';
+        this.pauseLabel!.string = this.session!.outcome !== 'playing' ? '重开' : this.session!.clock.paused ? '继续' : '暂停';
         if(this.stress) this.objectiveLabel!.string = `压力原型 · ${world.buildings.size} 建筑 · 120 移动标记 · 240 子弹标记`;
-        else if(this.invasion){
+        else if(world.map.waves?.length){
             const session = this.session!, waves = session.waves;
-            this.objectiveLabel!.string = session.enemies.defeated ? '核心已被摧毁 · 点击「重开」再次实验'
-                : `核心 ${session.enemies.core.health} · 敌人 ${session.enemies.enemies.size}/120 · ${waves.complete ? '全部敌人已出生' : `波次 ${waves.waveIndex+1}/${waves.waves.length} · 下次出生 ${(waves.remainingTicks/20).toFixed(1)}秒`}`;
+            if(!session.wavesStarted){
+                // 数值直接来自物流状态，确保教学提示不会与真正的开战判定漂移。
+                const condition = world.map.waveStart!, ammo = session.turretAmmo();
+                const copper = Math.min(world.delivered.copper, condition.delivered?.copper || 0);
+                const light = Math.min(ammo.copper, condition.ammo?.copper || 0);
+                const heavy = Math.min(ammo.graphite, condition.ammo?.graphite || 0);
+                this.objectiveLabel!.string = `备战 ①核心铜 ${copper}/${condition.delivered?.copper || 0}  ②普通炮弹 ${light}/${condition.ammo?.copper || 0}  ③重炮弹 ${heavy}/${condition.ammo?.graphite || 0}`;
+            }else this.objectiveLabel!.string = session.outcome === 'defeat' ? '战斗失败 · 核心已被摧毁 · 点击「重开」再次挑战'
+                : session.outcome === 'victory' ? `战斗胜利 · 已清除全部敌人 · 击杀 ${session.combat.kills} · 点击「重开」`
+                : `核心 ${session.enemies.core.health} · 敌人 ${session.enemies.enemies.size}/120 · 击杀 ${session.combat.kills} · ${waves.complete ? '全部敌人已出生' : `波次 ${waves.waveIndex+1}/${waves.waves.length} · 下次出生 ${(waves.remainingTicks/20).toFixed(1)}秒`}`;
         }else {
             const copper = Math.min(10,world.delivered.copper), graphite = Math.min(3,world.produced.graphite);
             this.objectiveLabel!.string = `目标 ① 铜送入核心 ${copper}/10    ② 生产石墨 ${graphite}/3${copper===10&&graphite===3 ? '    ✓ 供给链已建立' : ''}`;
@@ -419,7 +449,7 @@ export class GameApp extends Component {
     }
 
     private submit(command: Command): void {
-        if(this.session!.enemies.defeated){ this.say('核心已被摧毁，请重开。'); return; }
+        if(this.session!.outcome !== 'playing'){ this.say(this.session!.outcome === 'victory' ? '战斗已经胜利，请重开。' : '核心已被摧毁，请重开。'); return; }
         this.session!.enqueue(command);
         this.say(this.session!.clock.paused ? '操作已排队，点击「继续」后执行。' : '操作已提交');
     }

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "mapId": "logistics-lab",
-  "revision": 1,
+  "mapId": "tutorial-01",
+  "revision": 2,
   "name": "供给起步",
   "width": 48,
   "height": 48,
@@ -54,6 +54,11 @@
     {
       "x": 15,
       "y": 25,
+      "item": "copper"
+    },
+    {
+      "x": 14,
+      "y": 26,
       "item": "copper"
     },
     {
@@ -159,12 +164,9 @@
     }
   ],
   "allowed": [
-    "drill",
     "belt",
-    "router",
-    "junction",
-    "storage",
-    "crafter"
+    "turret",
+    "wall"
   ],
   "buildings": [
     {
@@ -192,7 +194,7 @@
       "direction": 0
     },
     {
-      "kind": "storage",
+      "kind": "heavyTurret",
       "x": 24,
       "y": 19,
       "direction": 0
@@ -286,6 +288,115 @@
       "x": 23,
       "y": 19,
       "direction": 0
+    },
+    {
+      "kind": "drill",
+      "x": 14,
+      "y": 26,
+      "direction": 0
+    },
+    {
+      "kind": "belt",
+      "x": 15,
+      "y": 26,
+      "direction": 0
+    },
+    {
+      "kind": "belt",
+      "x": 16,
+      "y": 26,
+      "direction": 0
+    },
+    {
+      "kind": "belt",
+      "x": 17,
+      "y": 26,
+      "direction": 0
+    },
+    {
+      "kind": "belt",
+      "x": 18,
+      "y": 26,
+      "direction": 0
+    },
+    {
+      "kind": "belt",
+      "x": 19,
+      "y": 26,
+      "direction": 0
+    },
+    {
+      "kind": "belt",
+      "x": 21,
+      "y": 26,
+      "direction": 0
+    },
+    {
+      "kind": "belt",
+      "x": 22,
+      "y": 26,
+      "direction": 0
+    },
+    {
+      "kind": "belt",
+      "x": 23,
+      "y": 26,
+      "direction": 0
+    },
+    {
+      "kind": "belt",
+      "x": 24,
+      "y": 26,
+      "direction": 0
+    },
+    {
+      "kind": "belt",
+      "x": 25,
+      "y": 26,
+      "direction": 0
+    },
+    {
+      "kind": "belt",
+      "x": 26,
+      "y": 26,
+      "direction": 0
+    },
+    {
+      "kind": "belt",
+      "x": 27,
+      "y": 26,
+      "direction": 0
+    },
+    {
+      "kind": "turret",
+      "x": 28,
+      "y": 26,
+      "direction": 0
+    }
+  ],
+  "waveStart": {
+    "delivered": {
+      "copper": 5
+    },
+    "ammo": {
+      "copper": 3,
+      "graphite": 2
+    }
+  },
+  "waves": [
+    {
+      "enemy": "normal",
+      "spawn": 0,
+      "count": 4,
+      "delayTicks": 160,
+      "intervalTicks": 50
+    },
+    {
+      "enemy": "fast",
+      "spawn": 0,
+      "count": 3,
+      "delayTicks": 80,
+      "intervalTicks": 40
     }
   ]
 }

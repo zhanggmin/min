@@ -15,6 +15,11 @@ export interface MapData {
     buildings: BuildPlan[];
     allowed: BuildingKind[];
     waves?: WaveDefinition[];
+    /** 教学关可用真实物流结果作为开战条件；未配置时波次从战斗开始计时。 */
+    waveStart?: {
+        delivered?: Partial<Inventory>;
+        ammo?: Partial<Inventory>;
+    };
 }
 
 export function validateMap(value: unknown): asserts value is MapData {
@@ -77,5 +82,20 @@ export function validateMap(value: unknown): asserts value is MapData {
             }
         }
         if(map.waves.some(wave => !reachable.has(key(map.spawns[wave.spawn])))) fail('波次出生点被岩石隔断，无法到达核心');
+    }
+    if(map.waveStart !== undefined){
+        if(!map.waves?.length || !map.waveStart || typeof map.waveStart !== 'object') fail('开战条件必须配合波次使用');
+        for(const group of [map.waveStart.delivered, map.waveStart.ammo]){
+            if(group === undefined) continue;
+            if(!group || typeof group !== 'object') fail('开战条件资源必须是对象');
+            if(Object.keys(group).some(item => !items.includes(item as Item))) fail('开战条件包含未知资源');
+            for(const item of items){
+                const amount = group[item];
+                if(amount !== undefined && (!Number.isSafeInteger(amount) || amount < 0)) fail('开战条件资源数量无效');
+            }
+        }
+        if((map.waveStart.ammo?.coal || 0) > 0) fail('炮塔不能使用煤作为弹药');
+        const hasCondition = items.some(item => (map.waveStart!.delivered?.[item] || 0) > 0 || (map.waveStart!.ammo?.[item] || 0) > 0);
+        if(!hasCondition) fail('开战条件不能为空');
     }
 }

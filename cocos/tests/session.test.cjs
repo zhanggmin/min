@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const {GameSession, SeededRandom} = require('../.test-build/application/GameSession.js');
 const {WaveScheduler} = require('../.test-build/domain/WaveScheduler.js');
 const {validateMap} = require('../.test-build/domain/MapData.js');
+const plan = (kind, x, y) => ({kind, x, y, direction: 0});
 const map = () => ({schemaVersion: 1, mapId: 'session', revision: 1, name: 'test', width: 8, height: 8,
     initialResources: {copper: 20, coal: 0, graphite: 0}, ores: [], rocks: [], spawns: [{x: 0, y: 0}],
     buildings: [{kind: 'core', x: 7, y: 7, direction: 0}], allowed: ['belt', 'wall']});
@@ -87,4 +88,62 @@ test('wave config rejects bad IDs, missing spawns, counts and noninteger times',
     }
     validateMap({...map(), waves: [wave()]});
     validateMap(map());
+});
+
+test('victory waits for the final spawn and final enemy death then freezes', () => {
+    const source = {...map(), waves: [wave({count: 1, delayTicks: 1})]};
+    const session = new GameSession(source);
+    session.advance(0.05);
+    assert.equal(session.waves.complete, true);
+    assert.equal(session.enemies.enemies.size, 1);
+    assert.equal(session.outcome, 'playing');
+    const enemy = [...session.enemies.enemies.values()][0];
+    session.enemies.damage(enemy.id, 999);
+    session.advance(0.05);
+    assert.equal(session.outcome, 'victory');
+    assert.equal(session.clock.paused, true);
+    const tick = session.world.tick;
+    session.clock.resume();
+    assert.equal(session.advance(10), 0);
+    assert.equal(session.world.tick, tick);
+});
+
+test('core death has priority over clearing the final enemy in the same tick', () => {
+    const source = {...map(), buildings: [plan('core', 7, 7)], spawns: [{x: 6, y: 7}],
+        waves: [wave({count: 1, delayTicks: 999})]};
+    const session = new GameSession(source);
+    session.enemies.core.health = 1;
+    session.enemies.spawn(source.waves[0]);
+    const enemy = [...session.enemies.enemies.values()][0];
+    session.combat.bullets.set(1, {id: 1, x: 5.5, y: 7, velocityX: 20, velocityY: 0, targetId: enemy.id,
+        damage: 999, armorPiercing: 99, remainingTicks: 2, kind: 'heavyTurret'});
+    session.advance(0.05);
+    assert.equal(session.enemies.core.health, 0);
+    assert.equal(session.enemies.enemies.size, 0);
+    assert.equal(session.outcome, 'defeat');
+});
+
+test('tutorial waves wait for real delivery and both turret ammo requirements', () => {
+    const source = {...map(), buildings: [plan('core', 7, 7), plan('turret', 5, 5), plan('heavyTurret', 5, 6)],
+        waves: [wave({count: 1, delayTicks: 3})], waveStart: {delivered: {copper: 2}, ammo: {copper: 1, graphite: 1}}};
+    const session = new GameSession(source);
+    session.advance(5);
+    assert.equal(session.wavesStarted, false);
+    assert.equal(session.waves.remainingTicks, 3);
+    session.world.delivered.copper = 2;
+    session.world.at({x: 5, y: 5}).cargo.push({item: 'copper', direction: 0, readyTick: 0});
+    session.advance(0.05);
+    assert.equal(session.wavesStarted, false);
+    session.world.at({x: 5, y: 6}).cargo.push({item: 'graphite', direction: 0, readyTick: 0});
+    session.advance(0.05);
+    assert.equal(session.wavesStarted, true);
+    assert.equal(session.waves.remainingTicks, 2);
+});
+
+test('wave start config rejects empty, negative and wave-less conditions', () => {
+    assert.throws(() => validateMap({...map(), waveStart: {delivered: {copper: 1}}}), /开战条件/);
+    assert.throws(() => validateMap({...map(), waves: [wave()], waveStart: {}}), /开战条件/);
+    assert.throws(() => validateMap({...map(), waves: [wave()], waveStart: {ammo: {graphite: -1}}}), /开战条件/);
+    assert.throws(() => validateMap({...map(), waves: [wave()], waveStart: {ammo: {coal: 1}}}), /炮塔不能使用煤/);
+    assert.throws(() => validateMap({...map(), waves: [wave()], waveStart: {delivered: {unknown: 1, copper: 1}}}), /未知资源/);
 });

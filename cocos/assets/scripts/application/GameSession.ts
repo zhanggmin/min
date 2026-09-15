@@ -1,13 +1,15 @@
-import {BuildPlan, Point} from '../domain/Content';
+import {BuildPlan, emptyInventory, Inventory, items, Point} from '../domain/Content';
 import {MapData} from '../domain/MapData';
 import {Result, World} from '../domain/World';
 import {SimulationClock} from './SimulationClock';
 import {EnemySystem} from '../domain/EnemySystem';
 import {WaveScheduler} from '../domain/WaveScheduler';
+import {CombatSystem} from '../domain/CombatSystem';
 
 export type Command = {type: 'build'; plans: readonly BuildPlan[]}
     | {type: 'rotate' | 'remove'; point: Point};
 export interface CommandResult extends Result { sequence: number; tick: number }
+export type SessionOutcome = 'playing' | 'victory' | 'defeat';
 
 /** A serializable uint32 state; zero is a valid seed. */
 export class SeededRandom {
@@ -29,6 +31,9 @@ export class GameSession {
     readonly random: SeededRandom;
     readonly enemies: EnemySystem;
     readonly waves: WaveScheduler;
+    readonly combat: CombatSystem;
+    outcome: SessionOutcome = 'playing';
+    wavesStarted: boolean;
     private nextSequence = 1;
     private pending: Array<{sequence: number; command: Command}> = [];
 
@@ -37,6 +42,8 @@ export class GameSession {
         this.random = new SeededRandom(seed);
         this.enemies = new EnemySystem(this.world);
         this.waves = new WaveScheduler(this.world.map.waves || []);
+        this.combat = new CombatSystem(this.world, this.enemies);
+        this.wavesStarted = !this.world.map.waveStart;
     }
 
     enqueue(command: Command): number {
@@ -49,7 +56,7 @@ export class GameSession {
     }
 
     advance(delta: number, report?: (result: CommandResult) => void): number {
-        if(this.enemies.defeated) return 0;
+        if(this.outcome !== 'playing') return 0;
         const results: CommandResult[] = [];
         const steps = this.clock.advance(delta, () => {
             const commands = this.pending;
@@ -60,12 +67,37 @@ export class GameSession {
                 results.push({...result, sequence, tick: this.world.tick + 1});
             }
             this.world.step();
-            this.waves.step(wave => this.enemies.spawn(wave));
-            if(this.world.map.waves?.length) this.enemies.step();
-            if(this.enemies.defeated){ this.pending = []; this.clock.pause(); }
+            // 教学关先检查真实物流成果，条件满足后的下一阶段才允许推进波次游标。
+            if(!this.wavesStarted && this.checkWaveStart()) this.wavesStarted = true;
+            if(this.wavesStarted) this.waves.step(wave => this.enemies.spawn(wave));
+            if(this.world.map.waves?.length){
+                this.enemies.step();
+                this.combat.step();
+                if(this.enemies.defeated) this.outcome = 'defeat';
+                else if(this.waves.complete && this.enemies.enemies.size === 0) this.outcome = 'victory';
+            }
+            if(this.outcome !== 'playing'){ this.pending = []; this.clock.pause(); }
         });
         // Presentation callbacks cannot influence another step in the same frame.
         for(const result of results) report?.(result);
         return steps;
+    }
+
+    /** 汇总所有炮塔内的弹药，UI 与开战门槛都读取同一份逻辑状态。 */
+    turretAmmo(): Inventory {
+        const result = emptyInventory();
+        for(const building of this.world.buildings.values()){
+            if(building.kind !== 'turret' && building.kind !== 'heavyTurret') continue;
+            for(const cargo of building.cargo) result[cargo.item]++;
+        }
+        return result;
+    }
+
+    private checkWaveStart(): boolean {
+        const condition = this.world.map.waveStart;
+        if(!condition) return true;
+        const ammo = this.turretAmmo();
+        return items.every(item => this.world.delivered[item] >= (condition.delivered?.[item] || 0)
+            && ammo[item] >= (condition.ammo?.[item] || 0));
     }
 }
