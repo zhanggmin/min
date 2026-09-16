@@ -7,7 +7,7 @@ const run = (session, ticks) => {
     for(let i = 0; i < ticks && session.outcome === 'playing'; i++) session.advance(0.05);
 };
 
-test('shipped tutorial connects three supply gaps then reaches a battle result', () => {
+test('legacy integration sample connects three supply gaps then reaches a battle result', () => {
     const map = require('../assets/resources/maps/logistics.json');
     const session = new GameSession(map);
     session.enqueue({type: 'build', plans: [belt(20, 19), belt(20, 24), belt(20, 26)]});
@@ -19,7 +19,7 @@ test('shipped tutorial connects three supply gaps then reaches a battle result',
     assert.equal(session.combat.kills, 7);
 });
 
-test('shipped tutorial can fail after the player dismantles the prepared defense', () => {
+test('legacy integration sample can fail after the player dismantles the prepared defense', () => {
     const map = require('../assets/resources/maps/logistics.json');
     const session = new GameSession(map);
     session.enqueue({type: 'build', plans: [belt(20, 19), belt(20, 24), belt(20, 26)]});

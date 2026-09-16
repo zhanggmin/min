@@ -1,0 +1,99 @@
+{
+  "schemaVersion": 1,
+  "mapId": "copper-onboarding-01",
+  "revision": 2,
+  "name": "亲手建立供给",
+  "width": 48,
+  "height": 48,
+  "initialResources": {
+    "copper": 64,
+    "coal": 0,
+    "graphite": 0
+  },
+  "ores": [
+    {
+      "x": 16,
+      "y": 24,
+      "item": "copper"
+    },
+    {
+      "x": 16,
+      "y": 25,
+      "item": "copper"
+    },
+    {
+      "x": 20,
+      "y": 22,
+      "item": "copper"
+    },
+    {
+      "x": 20,
+      "y": 21,
+      "item": "copper"
+    },
+    {
+      "x": 24,
+      "y": 19,
+      "item": "copper"
+    }
+  ],
+  "rocks": [],
+  "spawns": [
+    {
+      "x": 33,
+      "y": 24
+    }
+  ],
+  "buildings": [
+    {
+      "kind": "core",
+      "x": 22,
+      "y": 24,
+      "direction": 0
+    }
+  ],
+  "allowed": [
+    "drill",
+    "belt",
+    "turret",
+    "wall"
+  ],
+  "tutorial": "copper",
+  "waveStart": {
+    "manual": true,
+    "delivered": {
+      "copper": 1
+    },
+    "ammo": {
+      "copper": 1
+    }
+  },
+  "waves": [
+    {
+      "enemy": "normal",
+      "spawn": 0,
+      "count": 3,
+      "delayTicks": 200,
+      "intervalTicks": 80
+    },
+    {
+      "enemy": "normal",
+      "spawn": 0,
+      "count": 5,
+      "delayTicks": 600,
+      "intervalTicks": 60
+    },
+    {
+      "enemy": "fast",
+      "spawn": 0,
+      "count": 6,
+      "delayTicks": 600,
+      "intervalTicks": 50
+    }
+  ],
+  "preparation": {
+    "deliveryLimit": {
+      "copper": 24
+    }
+  }
+}

@@ -15,8 +15,13 @@ export interface MapData {
     buildings: BuildPlan[];
     allowed: BuildingKind[];
     waves?: WaveDefinition[];
+    tutorial?: 'copper';
+    /** 准备期累计送入核心的额度；不包含初始库存，消费或拆除不恢复额度。 */
+    preparation?: {deliveryLimit: Partial<Inventory>};
     /** 教学关可用真实物流结果作为开战条件；未配置时波次从战斗开始计时。 */
     waveStart?: {
+        /** 为 true 时必须由会话命令确认；旧地图仍在达标后自动开战。 */
+        manual?: boolean;
         delivered?: Partial<Inventory>;
         ammo?: Partial<Inventory>;
     };
@@ -85,6 +90,7 @@ export function validateMap(value: unknown): asserts value is MapData {
     }
     if(map.waveStart !== undefined){
         if(!map.waves?.length || !map.waveStart || typeof map.waveStart !== 'object') fail('开战条件必须配合波次使用');
+        if(map.waveStart.manual !== undefined && typeof map.waveStart.manual !== 'boolean') fail('开战确认必须是布尔值');
         for(const group of [map.waveStart.delivered, map.waveStart.ammo]){
             if(group === undefined) continue;
             if(!group || typeof group !== 'object') fail('开战条件资源必须是对象');
@@ -97,5 +103,22 @@ export function validateMap(value: unknown): asserts value is MapData {
         if((map.waveStart.ammo?.coal || 0) > 0) fail('炮塔不能使用煤作为弹药');
         const hasCondition = items.some(item => (map.waveStart!.delivered?.[item] || 0) > 0 || (map.waveStart!.ammo?.[item] || 0) > 0);
         if(!hasCondition) fail('开战条件不能为空');
+    }
+    if(map.tutorial !== undefined){
+        if(map.tutorial !== 'copper' || map.waveStart?.manual !== true
+            || !(map.waveStart.delivered?.copper! > 0) || !(map.waveStart.ammo?.copper! > 0)){
+            fail('铜教学需要核心铜、铜弹药目标和手动开战确认');
+        }
+    }
+    if(map.preparation !== undefined){
+        const limit = map.preparation?.deliveryLimit;
+        if(map.waveStart?.manual !== true || !limit || typeof limit !== 'object'
+            || Array.isArray(limit) || Object.keys(limit).length === 0) fail('准备期额度需要手动开战和非空资源配置');
+        if(Object.keys(limit).some(item => !items.includes(item as Item))) fail('准备期额度包含未知资源');
+        for(const item of items){
+            const amount = limit[item];
+            if(amount !== undefined && (!Number.isSafeInteger(amount) || amount < 0)) fail('准备期额度必须是非负整数');
+            if(amount !== undefined && amount < (map.waveStart?.delivered?.[item] || 0)) fail('准备期额度不能低于开战送达目标');
+        }
     }
 }

@@ -1,0 +1,266 @@
+[
+  {
+    "mode": "reference",
+    "mapId": "copper-onboarding-01",
+    "revision": 2,
+    "outcome": "victory",
+    "battleSeconds": 104.25,
+    "coreHealth": 600,
+    "kills": 14,
+    "shots": 36,
+    "ammoBeforeCut": 3,
+    "firstDamageSeconds": null,
+    "emptyAmmoSeconds": null,
+    "repairSeconds": null,
+    "resumedFireSeconds": null,
+    "minimumHealth": 600,
+    "waveSpawns": [
+      {
+        "tick": 200,
+        "enemy": "normal"
+      },
+      {
+        "tick": 280,
+        "enemy": "normal"
+      },
+      {
+        "tick": 360,
+        "enemy": "normal"
+      },
+      {
+        "tick": 960,
+        "enemy": "normal"
+      },
+      {
+        "tick": 1020,
+        "enemy": "normal"
+      },
+      {
+        "tick": 1080,
+        "enemy": "normal"
+      },
+      {
+        "tick": 1140,
+        "enemy": "normal"
+      },
+      {
+        "tick": 1200,
+        "enemy": "normal"
+      },
+      {
+        "tick": 1800,
+        "enemy": "fast"
+      },
+      {
+        "tick": 1850,
+        "enemy": "fast"
+      },
+      {
+        "tick": 1900,
+        "enemy": "fast"
+      },
+      {
+        "tick": 1950,
+        "enemy": "fast"
+      },
+      {
+        "tick": 2000,
+        "enemy": "fast"
+      },
+      {
+        "tick": 2050,
+        "enemy": "fast"
+      }
+    ],
+    "copperBalance": {
+      "actual": 166,
+      "expected": 166
+    }
+  },
+  {
+    "mode": "misplaced",
+    "mapId": "copper-onboarding-01",
+    "revision": 2,
+    "outcome": "defeat",
+    "battleSeconds": 65.5,
+    "coreHealth": 0,
+    "kills": 5,
+    "shots": 18,
+    "ammoBeforeCut": 5,
+    "firstDamageSeconds": 16.5,
+    "emptyAmmoSeconds": null,
+    "repairSeconds": null,
+    "resumedFireSeconds": null,
+    "minimumHealth": 0,
+    "waveSpawns": [
+      {
+        "tick": 200,
+        "enemy": "normal"
+      },
+      {
+        "tick": 280,
+        "enemy": "normal"
+      },
+      {
+        "tick": 360,
+        "enemy": "normal"
+      },
+      {
+        "tick": 960,
+        "enemy": "normal"
+      },
+      {
+        "tick": 1020,
+        "enemy": "normal"
+      },
+      {
+        "tick": 1080,
+        "enemy": "normal"
+      },
+      {
+        "tick": 1140,
+        "enemy": "normal"
+      },
+      {
+        "tick": 1200,
+        "enemy": "normal"
+      }
+    ],
+    "copperBalance": {
+      "actual": 118,
+      "expected": 118
+    }
+  },
+  {
+    "mode": "disconnected",
+    "mapId": "copper-onboarding-01",
+    "revision": 2,
+    "outcome": "defeat",
+    "battleSeconds": 69.5,
+    "coreHealth": 0,
+    "kills": 1,
+    "shots": 3,
+    "ammoBeforeCut": 3,
+    "firstDamageSeconds": 20.5,
+    "emptyAmmoSeconds": 12.75,
+    "repairSeconds": null,
+    "resumedFireSeconds": null,
+    "minimumHealth": 0,
+    "waveSpawns": [
+      {
+        "tick": 200,
+        "enemy": "normal"
+      },
+      {
+        "tick": 280,
+        "enemy": "normal"
+      },
+      {
+        "tick": 360,
+        "enemy": "normal"
+      },
+      {
+        "tick": 960,
+        "enemy": "normal"
+      },
+      {
+        "tick": 1020,
+        "enemy": "normal"
+      },
+      {
+        "tick": 1080,
+        "enemy": "normal"
+      },
+      {
+        "tick": 1140,
+        "enemy": "normal"
+      },
+      {
+        "tick": 1200,
+        "enemy": "normal"
+      }
+    ],
+    "copperBalance": {
+      "actual": 118,
+      "expected": 118
+    }
+  },
+  {
+    "mode": "repaired",
+    "mapId": "copper-onboarding-01",
+    "revision": 2,
+    "outcome": "victory",
+    "battleSeconds": 104.25,
+    "coreHealth": 432,
+    "kills": 14,
+    "shots": 36,
+    "ammoBeforeCut": 3,
+    "firstDamageSeconds": 20.5,
+    "emptyAmmoSeconds": 12.75,
+    "repairSeconds": 30.5,
+    "resumedFireSeconds": 30.8,
+    "minimumHealth": 432,
+    "waveSpawns": [
+      {
+        "tick": 200,
+        "enemy": "normal"
+      },
+      {
+        "tick": 280,
+        "enemy": "normal"
+      },
+      {
+        "tick": 360,
+        "enemy": "normal"
+      },
+      {
+        "tick": 960,
+        "enemy": "normal"
+      },
+      {
+        "tick": 1020,
+        "enemy": "normal"
+      },
+      {
+        "tick": 1080,
+        "enemy": "normal"
+      },
+      {
+        "tick": 1140,
+        "enemy": "normal"
+      },
+      {
+        "tick": 1200,
+        "enemy": "normal"
+      },
+      {
+        "tick": 1800,
+        "enemy": "fast"
+      },
+      {
+        "tick": 1850,
+        "enemy": "fast"
+      },
+      {
+        "tick": 1900,
+        "enemy": "fast"
+      },
+      {
+        "tick": 1950,
+        "enemy": "fast"
+      },
+      {
+        "tick": 2000,
+        "enemy": "fast"
+      },
+      {
+        "tick": 2050,
+        "enemy": "fast"
+      }
+    ],
+    "copperBalance": {
+      "actual": 165,
+      "expected": 165
+    }
+  }
+]

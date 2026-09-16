@@ -7,9 +7,11 @@ import {WaveScheduler} from '../domain/WaveScheduler';
 import {CombatSystem} from '../domain/CombatSystem';
 
 export type Command = {type: 'build'; plans: readonly BuildPlan[]}
+    | {type: 'startDefense'}
     | {type: 'rotate' | 'remove'; point: Point};
 export interface CommandResult extends Result { sequence: number; tick: number }
 export type SessionOutcome = 'playing' | 'victory' | 'defeat';
+export type TutorialStage = 'mine' | 'deliver' | 'supply' | 'ready' | 'defend' | SessionOutcome;
 
 /** A serializable uint32 state; zero is a valid seed. */
 export class SeededRandom {
@@ -50,6 +52,7 @@ export class GameSession {
         const sequence = this.nextSequence++;
         const copy: Command = command.type === 'build'
             ? {type: 'build', plans: command.plans.map(plan => ({...plan}))}
+            : command.type === 'startDefense' ? {type: 'startDefense'}
             : {type: command.type, point: {...command.point}};
         this.pending.push({sequence, command: copy});
         return sequence;
@@ -63,12 +66,13 @@ export class GameSession {
             this.pending = [];
             for(const {sequence, command} of commands){
                 const result = command.type === 'build' ? this.world.build(command.plans)
+                    : command.type === 'startDefense' ? this.startDefense()
                     : command.type === 'rotate' ? this.world.rotate(command.point) : this.world.remove(command.point);
                 results.push({...result, sequence, tick: this.world.tick + 1});
             }
-            this.world.step();
+            this.world.step(!this.wavesStarted);
             // 教学关先检查真实物流成果，条件满足后的下一阶段才允许推进波次游标。
-            if(!this.wavesStarted && this.checkWaveStart()) this.wavesStarted = true;
+            if(!this.wavesStarted && !this.world.map.waveStart?.manual && this.checkWaveStart()) this.wavesStarted = true;
             if(this.wavesStarted) this.waves.step(wave => this.enemies.spawn(wave));
             if(this.world.map.waves?.length){
                 this.enemies.step();
@@ -81,6 +85,31 @@ export class GameSession {
         // Presentation callbacks cannot influence another step in the same frame.
         for(const result of results) report?.(result);
         return steps;
+    }
+
+    /** 开战命令执行时重新检查实际库存，拆炮或命令排队不能绕过门槛。 */
+    get canStartDefense(): boolean {
+        return this.outcome === 'playing' && !this.wavesStarted
+            && this.world.map.waveStart?.manual === true && this.checkWaveStart();
+    }
+
+    get tutorialStage(): TutorialStage | undefined {
+        if(this.world.map.tutorial !== 'copper') return undefined;
+        if(this.outcome !== 'playing') return this.outcome;
+        if(this.wavesStarted) return 'defend';
+        if(this.world.delivered.copper < (this.world.map.waveStart!.delivered!.copper!)){
+            for(const building of this.world.buildings.values()){
+                if(building.kind === 'drill') return 'deliver';
+            }
+            return 'mine';
+        }
+        return this.canStartDefense ? 'ready' : 'supply';
+    }
+
+    private startDefense(): Result {
+        if(!this.canStartDefense) return {ok: false, message: '尚未满足供给目标，或防守已经开始'};
+        this.wavesStarted = true;
+        return {ok: true, message: '防守已开始，第一波进入倒计时'};
     }
 
     /** 汇总所有炮塔内的弹药，UI 与开战门槛都读取同一份逻辑状态。 */

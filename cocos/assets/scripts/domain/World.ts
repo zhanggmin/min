@@ -1,4 +1,4 @@
-import {BuildPlan, BuildingKind, definitions, emptyInventory, Inventory, Item, items, Point, vectors} from './Content';
+import {BuildPlan, BuildingKind, definitions, emptyInventory, Inventory, Item, itemNames, items, Point, vectors} from './Content';
 import {MapData, validateMap} from './MapData';
 
 export interface Cargo { item: Item; direction: number; readyTick: number }
@@ -11,6 +11,7 @@ export interface Building extends BuildPlan {
     output: number;
     cursor: number;
     reload: number;
+    lastDamageTick: number;
 }
 export interface Result { ok: boolean; message: string }
 interface Transfer { source: Building; target: Building; cargo?: Cargo; item: Item; direction: number }
@@ -30,6 +31,7 @@ export class World {
     readonly unitCells = new Set<number>();
     tick = 0;
     revision = 0;
+    private preparing: boolean;
     private nextId = 1;
     private readonly occupied: Int32Array;
     private readonly rocks = new Set<number>();
@@ -38,6 +40,7 @@ export class World {
 
     constructor(readonly map: MapData){
         validateMap(map);
+        this.preparing = !!map.preparation;
         this.inventory = {...map.initialResources};
         this.occupied = new Int32Array(map.width * map.height);
         for(const p of map.rocks) this.rocks.add(this.index(p));
@@ -54,7 +57,7 @@ export class World {
     ore(p: Point): Item | undefined { return this.ores.get(this.index(p)); }
     rock(p: Point): boolean { return this.rocks.has(this.index(p)); }
     private insert(plan: BuildPlan): void {
-        const b: Building = {...plan, id: this.nextId++, health: definitions[plan.kind].health, cargo: [], progress: 0, crafting: false, output: 0, cursor: 0, reload: 0};
+        const b: Building = {...plan, id: this.nextId++, health: definitions[plan.kind].health, cargo: [], progress: 0, crafting: false, output: 0, cursor: 0, reload: 0, lastDamageTick: -100};
         this.buildings.set(b.id, b);
         this.occupied[this.index(b)] = b.id;
     }
@@ -102,9 +105,17 @@ export class World {
         return {ok: true, message: '方向已旋转'};
     }
 
-    remove(p: Point): Result {
+    checkRemove(p: Point): Result {
         const b = this.at(p);
-        if(!b || b.kind === 'core') return {ok: false, message: '核心不可拆除'};
+        if(!b) return {ok: false, message: '此处没有建筑，请点击要拆除的建筑'};
+        if(b.kind === 'core') return {ok: false, message: '核心不可拆除'};
+        return {ok: true, message: '可拆除'};
+    }
+
+    remove(p: Point): Result {
+        const result = this.checkRemove(p);
+        if(!result.ok) return result;
+        const b = this.at(p)!;
         for(const item of items){
             const refund = Math.floor((definitions[b.kind].cost[item] || 0) * 0.5);
             this.inventory[item] += refund;
@@ -117,6 +128,7 @@ export class World {
     damage(id: number, amount: number): boolean {
         const b = this.buildings.get(id);
         if(!b || !Number.isFinite(amount) || amount <= 0) return false;
+        b.lastDamageTick = this.tick;
         b.health = Math.max(0, b.health - amount);
         if(b.health === 0) this.erase(b);
         return true;
@@ -130,7 +142,8 @@ export class World {
         this.revision++;
     }
 
-    step(): void {
+    step(preparing = this.preparing): void {
+        this.preparing = preparing;
         this.tick++;
         for(const b of this.buildings.values()){
             if(b.kind === 'drill' && b.cargo.length < definitions.drill.capacity){
@@ -168,7 +181,11 @@ export class World {
     private accepts(target: Building, item: Item, direction: number, reserved: number, laneReserved: number): boolean {
         const kind = target.kind;
         if(kind === 'drill' || kind === 'wall') return false;
-        if(kind === 'core') return this.inventory[item] + reserved < definitions.core.capacity;
+        if(kind === 'core'){
+            const remaining = this.preparationRemaining(item);
+            return this.inventory[item] + reserved < definitions.core.capacity
+                && (remaining === undefined || reserved < remaining);
+        }
         if(kind === 'crafter' && item !== 'coal') return false;
         if(kind === 'turret' && item !== 'copper') return false;
         if(kind === 'heavyTurret' && item !== 'graphite') return false;
@@ -238,8 +255,16 @@ export class World {
         return total;
     }
 
+    preparationRemaining(item: Item): number | undefined {
+        const limit = this.preparing ? this.map.preparation?.deliveryLimit[item] : undefined;
+        return limit === undefined ? undefined : Math.max(0, limit-this.delivered[item]);
+    }
+
     status(b: Building): string {
-        if(b.kind === 'core') return '收到的物品成为可用建材';
+        if(b.kind === 'core'){
+            const limits = items.filter(item => this.preparationRemaining(item) !== undefined);
+            return limits.length ? `备战还可接收 ${limits.map(item => `${this.preparationRemaining(item)}${itemNames[item]}`).join(' ')}\n花费不恢复额度\n满额留在线上，开战解除` : '收到的物品成为可用建材';
+        }
         if(b.kind === 'crafter') return b.output >= 4 ? '输出已满' : b.crafting ? `加工 ${Math.floor(b.progress / 40 * 100)}%` : '缺料：需要 2 煤 → 1 石墨';
         if(b.kind === 'turret' || b.kind === 'heavyTurret'){
             const ammo = b.kind === 'turret' ? 'copper' : 'graphite';
