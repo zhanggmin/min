@@ -16,6 +16,10 @@
     {
       "url": "db://assets/scenes/Battle.scene",
       "uuid": "a5960d58-cd8f-4982-90e4-0fb4707e8e33"
+    },
+    {
+      "url": "db://assets/scenes/Editor.scene",
+      "uuid": "6cd5f78c-d443-463d-a379-270a48ffdb15"
     }
   ],
   "debug": false,
