@@ -104,3 +104,14 @@ test('clock caps catchup and never simulates time spent paused', () => {
     clock.pause(); clock.advance(100, () => ticks++); clock.resume(); clock.advance(0.01, () => ticks++);
     assert.equal(ticks, 4);
 });
+
+test('destroyed-building feedback counts enemy damage once and excludes voluntary removal and the core', () => {
+    const w = new World(map());
+    w.build([plan('wall', 3, 3), plan('wall', 4, 3)]);
+    const id = w.at({x:3,y:3}).id;
+    w.damage(id, 1); assert.equal(w.lostBuildings, 0);
+    w.damage(id, 999); assert.equal(w.lostBuildings, 1);
+    w.damage(id, 999); assert.equal(w.lostBuildings, 1);
+    w.remove({x:4,y:3}); assert.equal(w.lostBuildings, 1);
+    w.damage(w.at({x:8,y:1}).id, 999); assert.equal(w.lostBuildings, 1);
+});

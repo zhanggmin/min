@@ -48,6 +48,8 @@ export class GameApp extends Component {
     private loading = false;
     private stress = false;
     private invasion = false;
+    private crossroads = false;
+    private nextLevelLabel?: Label;
     private renderTime = 0;
     private metricTime = 0;
     private frameSamples: number[] = [];
@@ -132,6 +134,9 @@ export class GameApp extends Component {
         art.fillColor = rgba(palette.amber); art.rect(-136,-16,32,32); art.fill();
         art.fillColor = rgba(palette.mint); art.roundRect(102,-20,40,40,6); art.fill();
         this.text(this.node, '采矿  →  运输  →  防守', 322, -164, 21, palette.muted, 420);
+        this.button('体验第二关：两处防区 →', -255, -310, 580, 48, () => {
+            this.platform.write('supply.mode', 'crossroads'); this.go('Battle');
+        });
         this.button('开发区', 322, -310, 340, 48, () => {
             this.platform.write('supply.mode', 'development'); this.go('Menu');
         });
@@ -140,7 +145,8 @@ export class GameApp extends Component {
     private loadBattle(): void {
         this.invasion = this.platform.read('supply.mode') === 'invasion';
         const mode = this.platform.read('supply.mode');
-        const name = this.invasion ? 'pathfinding' : mode === 'logistics' || mode === 'stress' ? 'logistics' : 'copper-tutorial';
+        this.crossroads = mode === 'crossroads';
+        const name = this.crossroads ? 'crossroads' : this.invasion ? 'pathfinding' : mode === 'logistics' || mode === 'stress' ? 'logistics' : 'copper-tutorial';
         const path = `maps/${name}`;
         const cached = GameApp.mapAssets.get(name) || resources.get(path, JsonAsset);
         if(cached){
@@ -167,6 +173,7 @@ export class GameApp extends Component {
             if(this.stress) this.configureStress(map);
             this.session = new GameSession(map);
             this.world = this.session.world;
+            this.resetCamera();
             this.lastWavesStarted = this.session.wavesStarted;
             this.statusLabel?.node.destroy();
             this.toolbarLabels = [];
@@ -175,7 +182,7 @@ export class GameApp extends Component {
     }
 
     private configureStress(map: MapData): void {
-        delete map.waves; delete map.waveStart; delete map.tutorial;
+        delete map.waves; delete map.waveStart; delete map.tutorial; delete map.preparation;
         map.width = 96; map.height = 96; map.rocks = []; map.ores = []; map.spawns = [];
         map.buildings = [{kind: 'core', x: 48, y: 48, direction: 0}];
         for(let i=0;i<400;i++) map.buildings.push({kind: 'belt', x: 20+i%40, y: 20+Math.floor(i/40), direction: 0});
@@ -219,6 +226,12 @@ export class GameApp extends Component {
             this.startLabel = this.button('先完成供给目标', 440, -140, 214, 44, () => this.submit({type: 'startDefense'}));
             this.startLabel.fontSize = 16;
         }
+        if(this.world!.map.tutorial){
+            this.nextLevelLabel = this.button('体验第二关 →', 440, -140, 214, 44, () => {
+                this.platform.write('supply.mode', 'crossroads'); this.go('Battle');
+            });
+            this.nextLevelLabel.node.parent!.active = false;
+        }
         this.button('拆除', 500, -194, 95, 44, () => this.choose('remove'));
         const kinds = this.stress ? logisticsKinds : this.world!.map.allowed;
         for(let i=0;i<kinds.length;i++){
@@ -229,11 +242,11 @@ export class GameApp extends Component {
         this.button('－', 330, -310, 55, 56, () => this.zoom(-4));
         this.button('＋', 397, -310, 55, 56, () => this.zoom(4));
         this.button('归位', 505, -310, 110, 56, () => {
-            this.center = this.stress ? {x:40,y:29} : {x:23,y:22.5}; this.drawTerrain();
+            this.resetCamera(); this.drawTerrain();
         });
         this.statusLabel = this.text(this.node, '', -138, -270, 16, palette.amber, 850);
         this.metricLabel = this.text(this.node, '', 440, 257, 13, palette.muted, 265);
-        this.say(this.world!.map.tutorial ? `备战核心累计接收最多 ${this.world!.map.preparation?.deliveryLimit.copper ?? '不限'} 铜，额度用完留在线上；开战解除。可随时暂停。` : this.stress ? '600 建筑 / 120 移动标记 / 240 子弹标记；非完整战斗性能。' : this.invasion ? '钻头会把铜送进炮塔；断开弹药线可观察停火，也可建墙改变敌人路线。' : '三条供给线各缺一格：选择传送带，补齐核心、普通炮塔和重型炮塔的线路。');
+        this.say(this.crossroads ? '近矿供给有限，可分流双炮或向下方远矿扩产。红圈是入口；备战入库上限 24 铜，开战解除。' : this.world!.map.tutorial ? `备战核心累计接收最多 ${this.world!.map.preparation?.deliveryLimit.copper ?? '不限'} 铜，额度用完留在线上；开战解除。可随时暂停。` : this.stress ? '600 建筑 / 120 移动标记 / 240 子弹标记；非完整战斗性能。' : this.invasion ? '钻头会把铜送进炮塔；断开弹药线可观察停火，也可建墙改变敌人路线。' : '三条供给线各缺一格：选择传送带，补齐核心、普通炮塔和重型炮塔的线路。');
         this.button('重开本关', 440, -248, 214, 44, () => this.go('Battle'));
         this.drawTerrain(); this.drawWorld(); this.refreshHUD();
     }
@@ -335,6 +348,10 @@ export class GameApp extends Component {
         this.plans = this.selected === 'belt' && this.dragStart ? beltLine(this.dragStart, end, this.direction)
             : [{...end, kind: this.selected, direction: this.direction}];
         this.describe();
+    }
+    private resetCamera(): void {
+        this.center = this.stress ? {x:40,y:29} : this.crossroads ? {x:26,y:22} : {x:23,y:22.5};
+        this.cell = this.stress ? 20 : this.crossroads ? 26 : 32;
     }
     private zoom(delta: number): void { this.cell = Math.max(16,Math.min(48,this.cell+delta)); this.drawTerrain(); }
     private clampCamera(): void {
@@ -509,9 +526,10 @@ export class GameApp extends Component {
 
     private refreshHUD(): void {
         const world = this.world!;
-        this.inventoryLabel!.string = world.map.tutorial ? `建材铜 ${world.inventory.copper}${world.preparationRemaining('copper') !== undefined ? `\n备战入库 ${world.delivered.copper}/${world.map.preparation!.deliveryLimit.copper} · 开战解除` : ''}` : `铜 ${world.inventory.copper}    煤 ${world.inventory.coal}    石墨 ${world.inventory.graphite}`;
+        this.inventoryLabel!.string = world.map.tutorial || this.crossroads ? `建材铜 ${world.inventory.copper}${world.preparationRemaining('copper') !== undefined ? `\n备战入库 ${world.delivered.copper}/${world.map.preparation!.deliveryLimit.copper} · 开战解除` : ''}` : `铜 ${world.inventory.copper}    煤 ${world.inventory.coal}    石墨 ${world.inventory.graphite}`;
         this.pauseLabel!.string = this.session!.outcome !== 'playing' ? '重开' : this.session!.clock.paused ? '继续' : '暂停';
         const session = this.session!;
+        if(this.nextLevelLabel) this.nextLevelLabel.node.parent!.active = session.outcome === 'victory';
         if(this.startLabel){
             this.startLabel.node.parent!.active = !session.wavesStarted;
             this.startLabel.string = session.canStartDefense ? '开始防守 →' : '先完成供给目标';
@@ -529,18 +547,26 @@ export class GameApp extends Component {
         else if(world.map.waves?.length){
             const session = this.session!, waves = session.waves;
             if(!session.wavesStarted){
-                // 数值直接来自物流状态，确保教学提示不会与真正的开战判定漂移。
                 const condition = world.map.waveStart!, ammo = session.turretAmmo();
-                const copper = Math.min(world.delivered.copper, condition.delivered?.copper || 0);
-                const light = Math.min(ammo.copper, condition.ammo?.copper || 0);
-                const heavy = Math.min(ammo.graphite, condition.ammo?.graphite || 0);
-                this.objectiveLabel!.string = `备战 ①核心铜 ${copper}/${condition.delivered?.copper || 0}  ②普通炮弹 ${light}/${condition.ammo?.copper || 0}  ③重炮弹 ${heavy}/${condition.ammo?.graphite || 0}`;
+                const goals: string[] = [];
+                for(const item of items){
+                    if(condition.delivered?.[item]) goals.push(`核心${itemNames[item]} ${Math.min(world.delivered[item], condition.delivered[item]!)}/${condition.delivered[item]}`);
+                    if(condition.ammo?.[item]) goals.push(`${itemNames[item]}弹药 ${Math.min(ammo[item], condition.ammo[item]!)}/${condition.ammo[item]}`);
+                }
+                this.objectiveLabel!.string = `备战 · ${goals.join(' · ')}${condition.manual ? ' · 达标后点击开始防守' : ''}`;
             }else this.objectiveLabel!.string = session.outcome === 'defeat' ? '战斗失败 · 核心已被摧毁 · 点击「重开」再次挑战'
                 : session.outcome === 'victory' ? `战斗胜利 · 核心 ${session.enemies.core.health}/600 · 击杀 ${session.combat.kills} · 耗弹 ${session.combat.shots} · 可重开改进布局`
-                : `核心 ${session.enemies.core.health} · 敌人 ${session.enemies.enemies.size}/120 · 击杀 ${session.combat.kills} · ${waves.complete ? '全部敌人已出生' : `波次 ${waves.waveIndex+1}/${waves.waves.length} ${waves.waves[waves.waveIndex].enemy === 'fast' ? '快速' : waves.waves[waves.waveIndex].enemy === 'armored' ? '重甲' : '普通'} · 下次出生 ${(waves.remainingTicks/20).toFixed(1)}秒`}`;
+                : `核心 ${session.enemies.core.health} · 敌人 ${session.enemies.enemies.size}/120 · 击杀 ${session.combat.kills} · ${waves.complete ? '全部敌人已出生' : `波次 ${waves.waveIndex+1}/${waves.waves.length} ${waves.waves[waves.waveIndex].enemy === 'fast' ? '快速' : waves.waves[waves.waveIndex].enemy === 'armored' ? '重甲' : '普通'} ×${waves.waves[waves.waveIndex].count} · 下次出生 ${(waves.remainingTicks/20).toFixed(1)}秒`}`;
         }else {
             const copper = Math.min(10,world.delivered.copper), graphite = Math.min(3,world.produced.graphite);
             this.objectiveLabel!.string = `目标 ① 铜送入核心 ${copper}/10    ② 生产石墨 ${graphite}/3${copper===10&&graphite===3 ? '    ✓ 供给链已建立' : ''}`;
+        }
+        if(!this.stress && session.wavesStarted && session.outcome === 'playing'){
+            let empty = 0;
+            for(const building of world.buildings.values()){
+                if((building.kind === 'turret' || building.kind === 'heavyTurret') && building.cargo.length === 0) empty++;
+            }
+            this.objectiveLabel!.string += `\n空弹炮塔 ${empty} · 被毁建筑 ${world.lostBuildings} · 可暂停调整供给和防线`;
         }
         if((this.selected==='browse' || this.selected==='remove') && this.selection) this.describe();
     }

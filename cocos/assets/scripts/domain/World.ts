@@ -31,6 +31,7 @@ export class World {
     readonly unitCells = new Set<number>();
     tick = 0;
     revision = 0;
+    lostBuildings = 0;
     private preparing: boolean;
     private nextId = 1;
     private readonly occupied: Int32Array;
@@ -130,7 +131,10 @@ export class World {
         if(!b || !Number.isFinite(amount) || amount <= 0) return false;
         b.lastDamageTick = this.tick;
         b.health = Math.max(0, b.health - amount);
-        if(b.health === 0) this.erase(b);
+        if(b.health === 0){
+            if(b.kind !== 'core') this.lostBuildings++;
+            this.erase(b);
+        }
         return true;
     }
 

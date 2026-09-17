@@ -1,0 +1,187 @@
+[
+  {
+    "mode": "minimum",
+    "mapId": "copper-crossroads-02",
+    "revision": 1,
+    "outcome": "defeat",
+    "seconds": 396.05,
+    "coreHealth": 0,
+    "kills": 73,
+    "shots": 184,
+    "spent": 38,
+    "buildings": 13,
+    "refunded": 0,
+    "events": [
+      {
+        "event": "first-wave-clear",
+        "seconds": 28.25,
+        "coreHealth": 600
+      },
+      {
+        "event": "core-hit",
+        "seconds": 91,
+        "health": 593
+      }
+    ],
+    "copperBalance": {
+      "actual": 430,
+      "expected": 430
+    }
+  },
+  {
+    "mode": "compact",
+    "mapId": "copper-crossroads-02",
+    "revision": 1,
+    "outcome": "victory",
+    "seconds": 400.55,
+    "coreHealth": 600,
+    "kills": 88,
+    "shots": 240,
+    "spent": 58,
+    "buildings": 20,
+    "refunded": 0,
+    "events": [
+      {
+        "event": "first-wave-clear",
+        "seconds": 28.25,
+        "coreHealth": 600
+      },
+      {
+        "event": "expand",
+        "seconds": 28.25,
+        "copper": 38
+      }
+    ],
+    "copperBalance": {
+      "actual": 421,
+      "expected": 421
+    }
+  },
+  {
+    "mode": "remote",
+    "mapId": "copper-crossroads-02",
+    "revision": 1,
+    "outcome": "victory",
+    "seconds": 399.25,
+    "coreHealth": 600,
+    "kills": 88,
+    "shots": 233,
+    "spent": 94,
+    "buildings": 33,
+    "refunded": 6,
+    "events": [
+      {
+        "event": "first-wave-clear",
+        "seconds": 28.25,
+        "coreHealth": 600
+      },
+      {
+        "event": "expand",
+        "seconds": 46.25,
+        "copper": 56
+      },
+      {
+        "event": "relocate-to-front",
+        "seconds": 56.25
+      }
+    ],
+    "copperBalance": {
+      "actual": 444,
+      "expected": 444
+    }
+  },
+  {
+    "mode": "compact-disconnected",
+    "mapId": "copper-crossroads-02",
+    "revision": 1,
+    "outcome": "victory",
+    "seconds": 410.1,
+    "coreHealth": 411,
+    "kills": 88,
+    "shots": 240,
+    "spent": 58,
+    "buildings": 19,
+    "refunded": 0,
+    "events": [
+      {
+        "event": "first-wave-clear",
+        "seconds": 28.25,
+        "coreHealth": 600
+      },
+      {
+        "event": "expand",
+        "seconds": 28.25,
+        "copper": 38
+      },
+      {
+        "event": "cut-supply",
+        "seconds": 320.05,
+        "ammo": 12
+      },
+      {
+        "event": "ammo-empty",
+        "seconds": 384.35
+      },
+      {
+        "event": "core-hit",
+        "seconds": 391.3,
+        "health": 593
+      }
+    ],
+    "copperBalance": {
+      "actual": 428,
+      "expected": 428
+    }
+  },
+  {
+    "mode": "compact-repaired",
+    "mapId": "copper-crossroads-02",
+    "revision": 1,
+    "outcome": "victory",
+    "seconds": 402.2,
+    "coreHealth": 495,
+    "kills": 88,
+    "shots": 240,
+    "spent": 59,
+    "buildings": 20,
+    "refunded": 0,
+    "events": [
+      {
+        "event": "first-wave-clear",
+        "seconds": 28.25,
+        "coreHealth": 600
+      },
+      {
+        "event": "expand",
+        "seconds": 28.25,
+        "copper": 38
+      },
+      {
+        "event": "cut-supply",
+        "seconds": 320.05,
+        "ammo": 12
+      },
+      {
+        "event": "ammo-empty",
+        "seconds": 384.35
+      },
+      {
+        "event": "core-hit",
+        "seconds": 391.3,
+        "health": 593
+      },
+      {
+        "event": "repair",
+        "seconds": 394.35
+      },
+      {
+        "event": "repaired-turret-fired",
+        "seconds": 394.65
+      }
+    ],
+    "copperBalance": {
+      "actual": 411,
+      "expected": 411
+    }
+  }
+]

@@ -1,0 +1,148 @@
+{
+  "schemaVersion": 1,
+  "mapId": "copper-crossroads-02",
+  "revision": 1,
+  "name": "两处防区",
+  "width": 64,
+  "height": 64,
+  "initialResources": {
+    "copper": 44,
+    "coal": 0,
+    "graphite": 0
+  },
+  "ores": [
+    {
+      "x": 16,
+      "y": 24,
+      "item": "copper"
+    },
+    {
+      "x": 20,
+      "y": 26,
+      "item": "copper"
+    },
+    {
+      "x": 29,
+      "y": 14,
+      "item": "copper"
+    },
+    {
+      "x": 31,
+      "y": 14,
+      "item": "copper"
+    }
+  ],
+  "rocks": [
+    {
+      "x": 24,
+      "y": 20
+    },
+    {
+      "x": 25,
+      "y": 20
+    },
+    {
+      "x": 26,
+      "y": 20
+    },
+    {
+      "x": 27,
+      "y": 20
+    },
+    {
+      "x": 24,
+      "y": 29
+    },
+    {
+      "x": 25,
+      "y": 29
+    },
+    {
+      "x": 26,
+      "y": 29
+    },
+    {
+      "x": 27,
+      "y": 29
+    }
+  ],
+  "spawns": [
+    {
+      "x": 38,
+      "y": 24
+    }
+  ],
+  "buildings": [
+    {
+      "kind": "core",
+      "x": 22,
+      "y": 24,
+      "direction": 0
+    }
+  ],
+  "allowed": [
+    "drill",
+    "belt",
+    "router",
+    "turret",
+    "wall"
+  ],
+  "waveStart": {
+    "manual": true,
+    "delivered": {
+      "copper": 1
+    },
+    "ammo": {
+      "copper": 1
+    }
+  },
+  "waves": [
+    {
+      "enemy": "normal",
+      "spawn": 0,
+      "count": 4,
+      "delayTicks": 200,
+      "intervalTicks": 80
+    },
+    {
+      "enemy": "fast",
+      "spawn": 0,
+      "count": 12,
+      "delayTicks": 1200,
+      "intervalTicks": 12
+    },
+    {
+      "enemy": "normal",
+      "spawn": 0,
+      "count": 12,
+      "delayTicks": 1200,
+      "intervalTicks": 30
+    },
+    {
+      "enemy": "fast",
+      "spawn": 0,
+      "count": 18,
+      "delayTicks": 1200,
+      "intervalTicks": 12
+    },
+    {
+      "enemy": "normal",
+      "spawn": 0,
+      "count": 18,
+      "delayTicks": 1200,
+      "intervalTicks": 25
+    },
+    {
+      "enemy": "fast",
+      "spawn": 0,
+      "count": 24,
+      "delayTicks": 1200,
+      "intervalTicks": 10
+    }
+  ],
+  "preparation": {
+    "deliveryLimit": {
+      "copper": 24
+    }
+  }
+}
