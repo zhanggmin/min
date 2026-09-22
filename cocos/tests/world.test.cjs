@@ -115,3 +115,11 @@ test('destroyed-building feedback counts enemy damage once and excludes voluntar
     w.remove({x:4,y:3}); assert.equal(w.lostBuildings, 1);
     w.damage(w.at({x:8,y:1}).id, 999); assert.equal(w.lostBuildings, 1);
 });
+
+test('belt corners can switch axis without changing endpoints, length, cost or final direction', () => {
+    const a=beltLine({x:1,y:1},{x:3,y:3},2), b=beltLine({x:1,y:1},{x:3,y:3},2,true);
+    assert.equal(a.length,b.length);
+    assert.deepEqual(a.map(p => [p.x,p.y]),[[1,1],[2,1],[3,1],[3,2],[3,3]]);
+    assert.deepEqual(b.map(p => [p.x,p.y]),[[1,1],[1,2],[1,3],[2,3],[3,3]]);
+    assert.deepEqual(b.map(p => p.direction),[1,1,0,0,2]);
+});

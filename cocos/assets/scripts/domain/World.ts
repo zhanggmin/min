@@ -280,11 +280,16 @@ export class World {
     }
 }
 
-export function beltLine(start: Point, end: Point, lastDirection: number): BuildPlan[] {
+export function beltLine(start: Point, end: Point, lastDirection: number, verticalFirst = false): BuildPlan[] {
     const points: Point[] = [{...start}];
     const current = {...start};
-    while(current.x !== end.x){ current.x += Math.sign(end.x - current.x); points.push({...current}); }
-    while(current.y !== end.y){ current.y += Math.sign(end.y - current.y); points.push({...current}); }
+    const horizontal = () => {
+        while(current.x !== end.x){ current.x += Math.sign(end.x - current.x); points.push({...current}); }
+    };
+    const vertical = () => {
+        while(current.y !== end.y){ current.y += Math.sign(end.y - current.y); points.push({...current}); }
+    };
+    if(verticalFirst){ vertical(); horizontal(); }else { horizontal(); vertical(); }
     return points.map((p, i) => {
         const next = points[i + 1];
         const direction = next ? vectors.findIndex(v => v.x === next.x - p.x && v.y === next.y - p.y) : lastDirection;

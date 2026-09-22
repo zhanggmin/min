@@ -1,19 +1,16 @@
 // 供给前线 / 表现层入口：负责渲染游戏世界、处理触摸交互、驱动战斗循环与教学提示。
-import {_decorator, Color, Component, director, EventTouch, Graphics, HorizontalTextAlignment, JsonAsset,
-    Label, Layers, Node, ResolutionPolicy, resources, UITransform, Vec3, view} from 'cc';
+import {_decorator, Component, director, EventTouch, Graphics, HorizontalTextAlignment, JsonAsset,
+    Label, Layers, Mask, Node, ResolutionPolicy, resources, ScrollView, UITransform, Vec3, view} from 'cc';
 import {BuildPlan, BuildingKind, costText, definitions, itemNames, items, logisticsKinds, Point, vectors} from '../domain/Content';
 import {MapData, validateMap} from '../domain/MapData';
 import {beltLine, Building, World} from '../domain/World';
-import {Command, GameSession} from '../application/GameSession';
+import {Command, CommandResult, GameSession} from '../application/GameSession';
 import {PlatformService} from '../platform/PlatformService';
 import {turretDefinitions} from '../domain/CombatSystem';
 import {enemyDefinitions} from '../domain/EnemySystem';
 
 const {ccclass, property} = _decorator;
-// 统一的深色界面色板：背景、面板、边框、文字、弱化、薄荷、琥珀、红色。
-const palette = {bg: '#101a23', panel: '#192833', border: '#2e4552', ink: '#e5efec', muted: '#8da6b0', mint: '#73e0c1', amber: '#edba75', red: '#e78378'};
-// 十六进制色值转 Cocos Color 的工具函数。
-const rgba = (hex: string) => new Color().fromHEX(hex);
+import {buildingIcon, GameButton, palette, rgba} from './GameWidgets';
 // 四个方向对应的箭头符号，用于 UI 文本展示建筑朝向。
 const arrows = ['→', '↑', '←', '↓'];
 
@@ -55,7 +52,6 @@ export class GameApp extends Component {
     private stress = false;                                // 是否处于压力测试模式
     private invasion = false;                              // 是否处于敌袭封路实验模式
     private crossroads = false;                            // 是否处于十字路口（第二关）模式
-    private nextLevelLabel?: Label;                         // "体验第二关"按钮（仅教学关胜利后显示）
     private renderTime = 0;                                // 距下次重绘累计时间
     private metricTime = 0;                                // 距下次刷新性能指标累计时间
     private frameSamples: number[] = [];                   // 最近帧时长采样（用于 P95）
@@ -64,17 +60,73 @@ export class GameApp extends Component {
     private lastWavesStarted = false;                      // 记录敌袭是否已开始（用于首次提示）
     private toolbarLabels: Array<{kind: BuildingKind; label: Label}> = []; // 建造工具栏按钮与其类型
 
+    private uiRoot?: Node;
+    private inspector?: Node;
+    private inspectorTitle?: Label;
+    private rotateLabel?: Label;
+    private bendLabel?: Label;
+    private removeLabel?: Label;
+    private lifeLabel?: Label;
+    private phaseLabel?: Label;
+    private alertLabel?: Label;
+    private goalPanel?: Node;
+    private modal?: Node;
+    private resultShown = false;
+    private buttons = new Map<Label, GameButton>();
+    private width = 1200;
+    private height = 720;
+    private boardWidth = 1200;
+    private boardHeight = 480;
+    private safeLeft = 0;
+    private safeRight = 0;
+    private safeTop = 0;
+    private safeBottom = 0;
+    private verticalFirst = false;
+    private lineStart?: Point;
+    private lineEnd?: Point;
+    private pendingAction?: number;
+    private pendingPlans: BuildPlan[] = [];
+    private toastTime = 0;
+    private markers: Array<{point: Point; node: Node; permanent: boolean}> = [];
+    private successPoint?: Point;
+    private successTime = 0;
+    private readonly resized = () => {
+        this.configureView();
+        if(this.world){ this.session!.clock.pause(); this.processPaused(); this.resultShown=false; this.battleUI(); }
+        else if(this.page === 'Menu'){ this.clearUI(); this.menu(); }
+    };
+
+    private configureView(): void {
+        const frame = view.getFrameSize();
+        this.height = Math.max(480, Math.min(720, frame.height));
+        this.width = Math.max(480, this.height*frame.width/Math.max(1,frame.height));
+        view.setDesignResolutionSize(this.width, this.height, ResolutionPolicy.SHOW_ALL);
+        const safe = this.platform.safeInsets();
+        const scale = this.height/Math.max(1,frame.height);
+        this.safeLeft = safe.left*scale; this.safeRight = safe.right*scale;
+        this.safeTop = safe.top*scale; this.safeBottom = safe.bottom*scale;
+    }
+
+    private clearUI(): void {
+        this.uiRoot?.destroy(); this.modal = undefined;
+        this.uiRoot = this.make(this.node, 'Game interface', 0, 0, this.width, this.height);
+        this.buttons.clear(); this.toolbarLabels = []; this.markers = [];
+        this.rect(this.uiRoot, 'Background', 0, 0, this.width, this.height, palette.bg);
+    }
+
     // 组件加载时：设置设计分辨率并注册平台可见性回调（页面切回时暂停、被中断时提示）。
     onLoad(): void {
-        view.setDesignResolutionSize(1200, 720, ResolutionPolicy.SHOW_ALL);
+        this.configureView();
+        view.on('canvas-resize', this.resized, this);
         this.cleanup = this.platform.onVisibility(() => {
-            this.session?.clock.pause(); this.plans = []; this.dragStart = undefined;
+            this.session?.clock.pause(); this.plans = []; this.dragStart = undefined; this.gesture = true;
+            this.processPaused();
         }, () => { this.session?.clock.pause(); this.say('已暂停，点击「继续」恢复。当前原型尚未提供战斗存档。'); });
     }
 
     // 入口：根据 page 渲染启动页 / 主菜单 / 战斗场景。
     start(): void {
-        this.rect(this.node, 'Background', 0, 0, 1200, 720, palette.bg);
+        this.clearUI();
         if(this.page === 'Boot'){
             this.text(this.node, 'SUPPLY / FRONTIER', 0, 38, 44, palette.mint, 1000);
             this.statusLabel = this.text(this.node, '正在准备供给前线…', 0, -26, 20, palette.muted);
@@ -126,32 +178,23 @@ export class GameApp extends Component {
             });
             return;
         }
-        this.text(this.node, 'S U P P L Y   /   F R O N T I E R', -260, 258, 18, palette.mint, 580);
-        this.text(this.node, '供给前线', -260, 174, 66, palette.ink, 580);
-        this.text(this.node, '让每一段运输，都通向下一次生存。', -260, 98, 22, palette.muted, 600);
-        this.rect(this.node, 'Mission', -255, -76, 580, 212, palette.panel);
-        this.text(this.node, '01  /  供给起步', -255, -18, 28, palette.ink, 530);
-        this.text(this.node, '从铜矿开始，亲手连接核心与炮塔。\n准备好后开始防守，抵御三波敌袭', -255, -86, 20, palette.muted, 530);
-        this.button('开始第一关  →', -255, -227, 580, 62, () => {
-            this.platform.write('supply.mode', 'tutorial'); this.go('Battle');
-        }, palette.mint, palette.bg);
-        // 右侧工厂插画：用棋盘格 + 传送带箭头 + 矿/塔色块抽象呈现玩法循环。
-        const art = this.make(this.node, 'Factory illustration', 322, 50, 400, 360).addComponent(Graphics);
-        for(let x=-4;x<=4;x++) for(let y=-4;y<=4;y++){
-            art.fillColor = rgba((x+y)%2 ? '#1a2b36' : '#1d303b'); art.roundRect(x*40-17,y*40-17,34,34,4); art.fill();
+        const root = this.uiRoot!, top = this.height/2-this.safeTop, w = Math.min(this.width-this.safeLeft-this.safeRight-48, 1000);
+        this.text(root, '供给前线', 0, top-60, 40, palette.ink, w, 54);
+        this.text(root, '采矿  →  运输  →  防守', 0, top-108, 18, palette.muted, w, 30);
+        const cardWidth = (w-24)/2, cardHeight = Math.min(300,this.height-210), y = -10;
+        for(let i=0;i<2;i++){
+            const x = (i ? 1 : -1)*(cardWidth+24)/2;
+            const card = this.rect(root, 'Level card', x,y,cardWidth,cardHeight,palette.panel);
+            const art = this.make(card,'Factory illustration',0,cardHeight/2-65,cardWidth-24,72).addComponent(Graphics);
+            buildingIcon(art, 'drill', -70,0,45); buildingIcon(art, 'belt', 0,0,35); buildingIcon(art, i ? 'turret' : 'core',70,0,45);
+            this.text(card,i ? '02  两处防区' : '01  供给起步',0,cardHeight/2-118,24,palette.ink,cardWidth-20,34);
+            this.text(card,i ? '分配铜矿，建立两处防线' : '从铜矿开始，连接核心与炮塔',0,-28,18,palette.muted,cardWidth-28,44);
+            this.button(i ? '体验第二关  →' : '开始第一关  →',0,-cardHeight/2+38,cardWidth-32,52,() => {
+                this.platform.write('supply.mode',i ? 'crossroads' : 'tutorial'); this.go('Battle');
+            },i ? palette.panel : palette.mint,i ? palette.ink : palette.white,card);
         }
-        for(let x=-3;x<=3;x++){
-            art.fillColor = rgba('#476576'); art.roundRect(x*40-15,-15,30,30,5); art.fill();
-            this.arrow(art, x*40, 0, 0, 10, palette.mint);
-        }
-        art.fillColor = rgba(palette.amber); art.rect(-136,-16,32,32); art.fill();
-        art.fillColor = rgba(palette.mint); art.roundRect(102,-20,40,40,6); art.fill();
-        this.text(this.node, '采矿  →  运输  →  防守', 322, -164, 21, palette.muted, 420);
-        this.button('体验第二关：两处防区 →', -255, -310, 580, 48, () => {
-            this.platform.write('supply.mode', 'crossroads'); this.go('Battle');
-        });
-        this.button('开发区', 322, -310, 340, 48, () => {
-            this.platform.write('supply.mode', 'development'); this.go('Menu');
+        this.button('开发区', w/2-64,-this.height/2+this.safeBottom+34,128,48,() => {
+            this.platform.write('supply.mode','development'); this.go('Menu');
         });
     }
 
@@ -208,83 +251,121 @@ export class GameApp extends Component {
 
     // 搭建战斗界面：标题栏、地图视口、检视面板、工具栏、目标栏、状态栏。
     private battleUI(): void {
-        this.text(this.node, '供给前线', -468, 306, 29, palette.ink, 220);
-        this.titleLabel = this.text(this.node, this.stress ? '性能实验 / 合成负载' : this.invasion ? '敌袭 / 封路实验' : this.world!.map.name, -218, 306, 19, palette.muted, 290);
-        this.inventoryLabel = this.text(this.node, '', 188, 306, 22, palette.mint, 455);
-        this.button('菜单', 514, 306, 100, 46, () => this.go('Menu'));
-        this.objectiveLabel = this.text(this.node, '', -138, 248, 19, palette.muted, 850);
-        // 世界视口：三层 Graphics 分别承载地形、建筑/敌人/子弹、建造预览与射程提示。
-        this.board = this.make(this.node, 'World viewport', -138, -17, 852, 480);
-        this.terrain = this.make(this.board, 'Terrain', 0, 0, 852, 480).addComponent(Graphics);
-        this.drawing = this.make(this.board, 'Buildings', 0, 0, 852, 480).addComponent(Graphics);
-        this.overlay = this.make(this.board, 'Build preview', 0, 0, 852, 480).addComponent(Graphics);
-        // 视口的单指/多指触摸事件统一在本组件处理。
-        this.board.on(Node.EventType.TOUCH_START, this.touchStart, this);
-        this.board.on(Node.EventType.TOUCH_MOVE, this.touchMove, this);
-        this.board.on(Node.EventType.TOUCH_END, this.touchEnd, this);
-        this.board.on(Node.EventType.TOUCH_CANCEL, () => {
-            this.dragStart = undefined; this.plans = []; this.gesture = true; this.pinchDistance = 0; this.describe();
-        }, this);
-        // 右侧检视面板：显示当前工具/选中建筑状态、建造/拆除确认、方向旋转。
-        this.rect(this.node, 'Inspector', 440, -5, 252, 504, palette.panel);
-        this.text(this.node, '建造面板', 440, 215, 22, palette.ink, 220);
-        this.infoLabel = this.text(this.node, '浏览模式\n\n单指拖动地图\n双指缩放\n点击建筑查看状态', 440, 125, 18, palette.muted, 224, 155);
-        this.button('旋转  ↻', 440, 22, 214, 44, () => {
-            if(this.selected === 'remove'){ this.say('拆除模式不旋转建筑，请先取消或确认拆除。'); return; }
-            this.direction = (this.direction+1)%4;
-            // 浏览选中建筑时直接提交旋转命令；正在预览则更新最后一条计划的方向。
-            if(this.selected === 'browse' && this.selection) this.submit({type: 'rotate', point: this.selection});
-            if(this.plans.length) this.plans[this.plans.length-1].direction = this.direction;
+        this.clearUI();
+        const root = this.uiRoot!, left = -this.width/2+this.safeLeft+12, right = this.width/2-this.safeRight-12;
+        const top = this.height/2-this.safeTop, bottom = -this.height/2+this.safeBottom;
+        const available = right-left, compact = available < 800;
+        const hudY = top-34, toolbarY = bottom+46;
+        this.boardWidth = this.width;
+        this.boardHeight = Math.max(120,top-bottom-158);
+        this.board = this.make(root,'World viewport',0,bottom+92+this.boardHeight/2,this.boardWidth,this.boardHeight);
+        this.board.addComponent(Mask);
+        this.terrain = this.make(this.board,'Terrain',0,0,this.boardWidth,this.boardHeight).addComponent(Graphics);
+        this.drawing = this.make(this.board,'Buildings',0,0,this.boardWidth,this.boardHeight).addComponent(Graphics);
+        this.overlay = this.make(this.board,'Preview',0,0,this.boardWidth,this.boardHeight).addComponent(Graphics);
+        this.board.on(Node.EventType.TOUCH_START,this.touchStart,this);
+        this.board.on(Node.EventType.TOUCH_MOVE,this.touchMove,this);
+        this.board.on(Node.EventType.TOUCH_END,this.touchEnd,this);
+        this.board.on(Node.EventType.TOUCH_CANCEL,() => {
+            this.dragStart=undefined; this.plans=[]; this.gesture=true; this.pinchDistance=0; this.describe();
+        });
+        const markerPoints = [
+            {point:this.session!.enemies.core,text:'核心',permanent:true},
+            ...this.world!.map.spawns.map(point => ({point,text:'敌人入口',permanent:true})),
+            ...this.world!.map.ores.filter((ore,i,ores) => !ores.slice(0,i).some(p => p.item === ore.item && Math.abs(p.x-ore.x)+Math.abs(p.y-ore.y)<3))
+                .map(point => ({point,text:point.item === 'copper' ? '铜矿' : '煤矿',permanent:false}))
+        ];
+        for(const marker of markerPoints){
+            const n=this.rect(this.board,'Map label',0,0,80,25,palette.panel);
+            this.text(n,marker.text,0,0,15,palette.ink,76,24);
+            this.markers.push({...marker,node:n});
+        }
+        this.rect(root,'Status bar',0,hudY,this.width,68,palette.panel);
+        const titleWidth = compact ? 136 : 220;
+        this.titleLabel=this.text(root,this.crossroads ? '02  两处防区' : this.stress ? '性能实验' : this.invasion ? '封路实验' : '01  供给起步',left+titleWidth/2,hudY,compact ? 18 : 22,palette.ink,titleWidth,40);
+        this.lifeLabel=this.text(root,'',left+titleWidth+70,hudY,18,palette.ink,130,42);
+        this.inventoryLabel=this.text(root,'',left+titleWidth+185,hudY,18,palette.mint,110,50);
+        this.pauseLabel=this.button('暂停',right-120,hudY,80,48,() => {
+            if(this.session!.outcome !== 'playing') return;
+            if(this.session!.clock.paused) this.session!.clock.resume();
+            else { this.session!.clock.pause(); this.processPaused(); }
+            this.refreshHUD();
+        });
+        this.button('菜单',right-36,hudY,72,48,() => this.openMenu());
+        const goalWidth=Math.min(compact ? 340 : 430,available-230);
+        this.goalPanel=this.rect(root,'Current objective',left+goalWidth/2,top-112,goalWidth,76,palette.panel);
+        this.blockInput(this.goalPanel);
+        this.objectiveLabel=this.text(this.goalPanel,'',-25,0,18,palette.ink,goalWidth-66,66);
+        this.objectiveLabel.horizontalAlign=HorizontalTextAlignment.LEFT;
+        this.button('?',goalWidth/2-27,0,44,48,() => this.showGoals(),palette.panel,palette.ink,this.goalPanel);
+        this.phaseLabel=this.text(root,'',0,bottom+113,18,palette.ink,Math.max(200,available-300),30);
+        this.startLabel=this.button('完成供给目标',right-105,top-102,210,48,() => this.submit({type:'startDefense'}),palette.mint,palette.white);
+        this.startLabel.node.parent!.active=!!this.world!.map.waveStart?.manual;
+        this.alertLabel=this.button('',left+95,bottom+148,190,44,() => this.locateEmptyTurret(),palette.panel,palette.amber);
+        this.statusLabel=this.text(root,'',0,bottom+177,17,palette.amber,Math.min(available-24,780),48);
+        this.statusLabel.node.active=false;
+        const detailWidth=compact ? 224 : 264, detailHeight=compact ? 222 : 266;
+        this.inspector=this.rect(root,'Inspector',right-detailWidth/2,top-148-detailHeight/2,detailWidth,detailHeight,palette.panel);
+        this.blockInput(this.inspector);
+        this.inspectorTitle=this.text(this.inspector,'',0,detailHeight/2-24,20,palette.ink,detailWidth-24,30);
+        this.infoLabel=this.text(this.inspector,'',0,compact ? 26 : 34,17,palette.muted,detailWidth-24,compact ? 84 : 124);
+        this.infoLabel.horizontalAlign=HorizontalTextAlignment.LEFT;
+        const actionY=-detailHeight/2+84;
+        this.rotateLabel=this.button('旋转',-detailWidth/4+4,actionY,detailWidth/2-18,44,() => this.rotateSelection(),palette.panel,palette.ink,this.inspector);
+        this.bendLabel=this.button('切换拐弯',detailWidth/4-4,actionY,detailWidth/2-18,44,() => {
+            this.verticalFirst=!this.verticalFirst;
+            if(this.lineStart && this.lineEnd) this.plans=beltLine(this.lineStart,this.lineEnd,this.direction,this.verticalFirst);
             this.describe();
-        });
-        this.confirmLabel = this.button('确认建造', 440, -32, 214, 48, () => this.confirmAction(), palette.mint, palette.bg);
-        this.button('取消 / 浏览', 440, -86, 214, 44, () => this.choose('browse'));
-        this.pauseLabel = this.button('暂停', 380, -194, 95, 44, () => {
-            // 战斗已结束时按钮切换为「重开」。
-            if(this.session!.outcome !== 'playing'){ this.go('Battle'); return; }
-            if(this.session!.clock.paused) this.session!.clock.resume(); else this.session!.clock.pause();
-        });
-        // 手动开始防守模式：达标前提示先完成供给目标，达标后切换为开始防守。
-        if(this.world!.map.waveStart?.manual){
-            this.startLabel = this.button('先完成供给目标', 440, -140, 214, 44, () => this.submit({type: 'startDefense'}));
-            this.startLabel.fontSize = 16;
-        }
-        // 教学关胜利后才显示的「体验第二关」按钮。
-        if(this.world!.map.tutorial){
-            this.nextLevelLabel = this.button('体验第二关 →', 440, -140, 214, 44, () => {
-                this.platform.write('supply.mode', 'crossroads'); this.go('Battle');
-            });
-            this.nextLevelLabel.node.parent!.active = false;
-        }
-        this.button('拆除', 500, -194, 95, 44, () => this.choose('remove'));
-        // 底部建造工具栏：压力测试只显示物流类，正式关卡使用地图允许的建筑。
-        const kinds = this.stress ? logisticsKinds : this.world!.map.allowed;
+        },palette.panel,palette.ink,this.inspector);
+        this.removeLabel=this.button('拆除',detailWidth/4-4,actionY,detailWidth/2-18,44,() => this.choose('remove'),palette.panel,palette.red,this.inspector);
+        this.confirmLabel=this.button('确认建造',-38,-detailHeight/2+30,detailWidth-100,48,() => this.confirmAction(),palette.mint,palette.white,this.inspector);
+        this.button('取消',detailWidth/2-44,-detailHeight/2+30,72,48,() => this.choose('browse'),palette.panel,palette.ink,this.inspector);
+        this.button('－',right-162,bottom+121,48,48,() => this.zoom(-4));
+        this.button('＋',right-108,bottom+121,48,48,() => this.zoom(4));
+        this.button('归位',right-38,bottom+121,80,48,() => { this.resetCamera(); this.drawTerrain(); });
+        // Scroll only the tools, never reduce the touch target to fit additional kinds.
+        this.rect(root,'Tool shelf',0,toolbarY,this.width,92,palette.panel);
+        const shelf=this.make(root,'Tools', (left+right)/2,toolbarY,available,84);
+        const clip=this.make(shelf,'Tool clip',0,0,available,84); clip.addComponent(Mask);
+        const kinds=this.stress ? logisticsKinds : this.world!.map.allowed;
+        const toolWidth=Math.max(140,Math.min(220,(available-(kinds.length-1)*12)/kinds.length));
+        const contentWidth=Math.max(available,kinds.length*(toolWidth+12)-12);
+        const content=this.make(clip,'Tool content',(contentWidth-available)/2,0,contentWidth,84);
+        const scroll=shelf.addComponent(ScrollView); scroll.content=content; scroll.horizontal=true; scroll.vertical=false;
+        scroll.elastic=false; scroll.inertia=true;
         for(let i=0;i<kinds.length;i++){
-            const kind = kinds[i];
-            const label = this.button(`${definitions[kind].name}\n${costText(kind)}`, -504+i*144, -310, 132, 62, () => this.choose(kind));
-            label.fontSize = 17; label.lineHeight = 24; this.toolbarLabels.push({kind, label});
+            const kind=kinds[i], x=-contentWidth/2+toolWidth/2+i*(toolWidth+12);
+            const label=this.button(`${definitions[kind].name}\n${costText(kind)}`,x,0,toolWidth,72,() => this.choose(kind),palette.panel,palette.ink,content);
+            label.node.setPosition(20,0,0); label.node.getComponent(UITransform)!.setContentSize(toolWidth-52,66);
+            label.fontSize=17; label.lineHeight=24;
+            const icon=this.make(label.node.parent!,'Building icon',-toolWidth/2+26,0,40,40).addComponent(Graphics);
+            buildingIcon(icon,kind,0,0,34);
+            this.toolbarLabels.push({kind,label});
         }
-        this.button('－', 330, -310, 55, 56, () => this.zoom(-4));
-        this.button('＋', 397, -310, 55, 56, () => this.zoom(4));
-        this.button('归位', 505, -310, 110, 56, () => {
-            this.resetCamera(); this.drawTerrain();
-        });
-        this.statusLabel = this.text(this.node, '', -138, -270, 16, palette.amber, 850);
-        this.metricLabel = this.text(this.node, '', 440, 257, 13, palette.muted, 265);
-        // 首次状态提示按模式分发：十字路口、教学、压力、敌袭、普通各不同。
-        this.say(this.crossroads ? '近矿供给有限，可分流双炮或向下方远矿扩产。红圈是入口；备战入库上限 24 铜，开战解除。' : this.world!.map.tutorial ? `备战核心累计接收最多 ${this.world!.map.preparation?.deliveryLimit.copper ?? '不限'} 铜，额度用完留在线上；开战解除。可随时暂停。` : this.stress ? '600 建筑 / 120 移动标记 / 240 子弹标记；非完整战斗性能。' : this.invasion ? '钻头会把铜送进炮塔；断开弹药线可观察停火，也可建墙改变敌人路线。' : '三条供给线各缺一格：选择传送带，补齐核心、普通炮塔和重型炮塔的线路。');
-        this.button('重开本关', 440, -248, 214, 44, () => this.go('Battle'));
-        this.drawTerrain(); this.drawWorld(); this.refreshHUD();
+        this.metricLabel=this.text(root,'',0,top-56,14,palette.muted,400,20);
+        this.metricLabel.node.active=this.stress || this.invasion;
+        this.describe(); this.drawTerrain(); this.drawWorld(); this.refreshHUD();
+    }
+
+    private rotateSelection(): void {
+        if(this.pendingAction !== undefined) return;
+        if(this.selected === 'browse' && this.selection) this.submit({type:'rotate',point:this.selection});
+        else if(this.selected !== 'remove'){
+            this.direction=(this.direction+1)%4;
+            if(this.plans.length) this.plans[this.plans.length-1].direction=this.direction;
+        }
+        this.describe();
     }
 
     // 切换工具：browse / remove / 具体建筑类型，并刷新检视面板与工具栏高亮。
     private choose(kind: BuildingKind | 'browse' | 'remove'): void {
         // 从已选建筑进入拆除时保留目标，避免玩家必须重新选点却没有提示。
         const target = kind === 'remove' && this.selection && this.world?.at(this.selection) ? this.selection : undefined;
-        this.selected = kind; this.plans = []; this.selection = target; this.dragStart = undefined;
+        this.selected = kind; this.plans = []; this.selection = target; this.dragStart = undefined; this.lineStart=undefined; this.lineEnd=undefined;
         this.describe();
         // 高亮当前工具按钮，其它按钮恢复默认色。
-        for(const entry of this.toolbarLabels) entry.label.color = rgba(entry.kind === kind ? palette.mint : palette.ink);
+        for(const entry of this.toolbarLabels) this.buttons.get(entry.label)?.setState(true,entry.kind === kind);
+        this.drawTerrain();
         if(kind === 'remove') this.say(target ? '已选中拆除目标，点击「确认拆除」执行；取消不会拆除。' : '先点建筑，再点「确认拆除」。返还 50% 建材（向下取整），存货销毁。');
         else if(kind === 'browse') this.say('单指拖动浏览；点击查看建筑；双指缩放。');
         else this.say(kind === 'belt' ? '拖动预览整条传送带，确认后统一建造；末端方向可旋转。' : '点击网格预览，再点击确认建造。');
@@ -292,6 +373,7 @@ export class GameApp extends Component {
 
     // 确认按钮分发：拆除走 remove，浏览给提示，其它走 build。
     private confirmAction(): void {
+        if(this.pendingAction !== undefined){ this.say('正在执行，请稍候'); return; }
         if(this.selected === 'remove'){
             if(!this.selection){ this.say('先点击要拆除的建筑，再点「确认拆除」。'); return; }
             const result = this.world!.checkRemove(this.selection);
@@ -302,7 +384,7 @@ export class GameApp extends Component {
         }else {
             const result = this.world!.checkBuild(this.plans);
             if(result.ok){
-                if(this.submit({type: 'build', plans: this.plans})) this.plans = [];
+                this.submit({type: 'build', plans: this.plans});
             }else this.say(result.message);
         }
         this.describe();
@@ -313,8 +395,21 @@ export class GameApp extends Component {
         if(!this.infoLabel || !this.world) return;
         if(this.confirmLabel) this.confirmLabel.string = this.selected === 'remove' ? '确认拆除' : '确认建造';
         const selectedBuilding = this.selection && this.world.at(this.selection);
+        if(this.inspector){
+            this.inspector.active=this.selected !== 'browse' || !!selectedBuilding;
+            this.inspectorTitle!.string=this.selected === 'remove' ? '拆除预览' : this.selected === 'browse' ? '建筑状态' : definitions[this.selected].name;
+            this.confirmLabel!.node.parent!.active=this.selected !== 'browse';
+            const valid=this.selected === 'remove' ? !!this.selection && this.world.checkRemove(this.selection).ok
+                : this.selected !== 'browse' && this.plans.length > 0 && this.world.checkBuild(this.plans).ok;
+            this.buttons.get(this.confirmLabel!)?.setState(valid && this.pendingAction === undefined);
+            if(this.pendingAction !== undefined) this.confirmLabel!.string='处理中…';
+            const kind=this.selected === 'browse' ? selectedBuilding?.kind : this.selected;
+            this.rotateLabel!.node.parent!.active=!!kind && !['remove','core','wall','router','junction','storage'].includes(kind);
+            this.bendLabel!.node.parent!.active=this.selected === 'belt';
+            this.removeLabel!.node.parent!.active=this.selected === 'browse' && !!selectedBuilding && selectedBuilding.kind !== 'core';
+        }
         if(this.selected === 'browse' && selectedBuilding){
-            this.infoLabel.string = `${definitions[selectedBuilding.kind].name}  ${arrows[selectedBuilding.direction]}\n(${selectedBuilding.x}, ${selectedBuilding.y})\n\n${this.world.status(selectedBuilding)}\n生命 ${selectedBuilding.health}/${definitions[selectedBuilding.kind].health}`;
+            this.infoLabel.string = `${definitions[selectedBuilding.kind].name}  ${arrows[selectedBuilding.direction]}\n${this.world.status(selectedBuilding)}\n生命 ${selectedBuilding.health}/${definitions[selectedBuilding.kind].health}`;
         }else if(this.selected === 'remove'){
             // 拆除模式：列出可返还建材（50% 向下取整）和将销毁的存货数量。
             const result = this.selection && this.world.checkRemove(this.selection);
@@ -328,7 +423,11 @@ export class GameApp extends Component {
         }
         else if(this.selected !== 'browse'){
             const result = this.plans.length ? this.world.checkBuild(this.plans) : null;
-            this.infoLabel.string = `${definitions[this.selected].name}  ${arrows[this.direction]}\n${costText(this.selected)} / 个\n\n${result?.message || '请选择位置'}\n${this.selected === 'crafter' ? '2 煤 → 1 石墨 / 2 秒' : ''}`;
+            const cost=items.map(item => {
+                const amount=(definitions[this.selected as BuildingKind].cost[item] || 0)*this.plans.length;
+                return amount ? `${amount}${itemNames[item]}` : '';
+            }).filter(Boolean).join(' ');
+            this.infoLabel.string = `${costText(this.selected)} / 个   ${arrows[this.direction]}\n${this.plans.length ? `预览 ${this.plans.length} 格 · 总计 ${cost}` : '点击地图选择位置'}\n${result ? result.ok ? '✓ 可以建造' : result.message : this.selected === 'drill' ? '需放在矿点上，箭头为输出方向' : this.selected === 'router' ? '自动轮流分流，不送回入口' : this.selected === 'crafter' ? '2 煤 → 1 石墨 / 2 秒' : '预览后确认，取消不扣费'}`;
         }else this.infoLabel.string = '浏览模式\n\n单指拖动地图\n双指缩放\n点击建筑查看状态';
     }
 
@@ -344,6 +443,7 @@ export class GameApp extends Component {
     }
     // 按下：判断是否多指手势，记录拖动起点；建造模式下立即预览首格。
     private touchStart(event: EventTouch): void {
+        if(this.session?.outcome !== 'playing' || this.modal || this.pendingAction !== undefined) return;
         this.gesture = event.getAllTouches().length > 1;
         this.pinchDistance = 0;
         this.touchTravel = 0;
@@ -352,9 +452,10 @@ export class GameApp extends Component {
     }
     // 移动：多指走缩放与平移；单指在浏览模式拖动地图，其它模式刷新预览。
     private touchMove(event: EventTouch): void {
+        if(this.session?.outcome !== 'playing' || this.modal || this.pendingAction !== undefined) return;
         const touches = event.getAllTouches();
         if(touches.length > 1){
-            this.gesture = true; this.plans = [];
+            this.gesture = true; this.plans = []; this.describe();
             const a = touches[0].getUILocation(), b = touches[1].getUILocation();
             const d = Math.hypot(a.x-b.x,a.y-b.y);
             // 用上一帧双指距离按比例缩放 cell。
@@ -373,6 +474,7 @@ export class GameApp extends Component {
     }
     // 抬起：非手势且非拖动时记为点击，更新选中格并刷新预览/检视。
     private touchEnd(event: EventTouch): void {
+        if(this.session?.outcome !== 'playing' || this.modal || this.pendingAction !== undefined) return;
         if(!this.gesture && !(this.selected === 'browse' && this.touchTravel > 8)){
             this.selection = this.grid(event);
             if(this.selected !== 'browse' && this.selected !== 'remove') this.preview(this.selection);
@@ -383,14 +485,16 @@ export class GameApp extends Component {
     // 生成建造预览计划：传送带拖动产生折线，其它建筑单格。
     private preview(end: Point): void {
         if(this.selected === 'browse' || this.selected === 'remove') return;
-        this.plans = this.selected === 'belt' && this.dragStart ? beltLine(this.dragStart, end, this.direction)
+        if(this.dragStart) this.lineStart={...this.dragStart};
+        this.lineEnd={...end};
+        this.plans = this.selected === 'belt' && this.lineStart ? beltLine(this.lineStart, end, this.direction,this.verticalFirst)
             : [{...end, kind: this.selected, direction: this.direction}];
         this.describe();
     }
     // 相机归位到当前模式的默认中心与缩放。
     private resetCamera(): void {
         this.center = this.stress ? {x:40,y:29} : this.crossroads ? {x:26,y:22} : {x:23,y:22.5};
-        this.cell = this.stress ? 20 : this.crossroads ? 26 : 32;
+        this.cell = Math.max(16,Math.min(this.stress ? 20 : this.crossroads ? 26 : 32,(this.height-190)/(this.crossroads ? 18 : 14)));
     }
     // 缩放调整并重绘地形。
     private zoom(delta: number): void { this.cell = Math.max(16,Math.min(48,this.cell+delta)); this.drawTerrain(); }
@@ -402,25 +506,26 @@ export class GameApp extends Component {
     // 格子坐标 -> 视口像素坐标。
     private screen(p: Point): Point { return {x:(p.x+0.5-this.center.x)*this.cell, y:(p.y+0.5-this.center.y)*this.cell}; }
     // 像素坐标是否落在视口可见范围。
-    private visible(p: Point): boolean { return Math.abs(p.x) < 426-this.cell/2 && Math.abs(p.y) < 240-this.cell/2; }
+    private visible(p: Point): boolean { return Math.abs(p.x) < this.boardWidth/2-this.cell/2 && Math.abs(p.y) < this.boardHeight/2-this.cell/2; }
 
     // 重绘地形：背景、可见格子（含矿石/岩石），以及敌人出生点提示圈与朝向箭头。
     private drawTerrain(): void {
         if(!this.world || !this.terrain) return;
         const g = this.terrain; g.clear();
-        g.fillColor = rgba('#0b131a'); g.rect(-426,-240,852,480); g.fill();
-        const halfX = Math.ceil(426/this.cell), halfY = Math.ceil(240/this.cell);
+        g.fillColor = rgba(palette.bg); g.rect(-this.boardWidth/2,-this.boardHeight/2,this.boardWidth,this.boardHeight); g.fill();
+        const halfX = Math.ceil(this.boardWidth/2/this.cell), halfY = Math.ceil(this.boardHeight/2/this.cell);
         for(let y=Math.floor(this.center.y)-halfY;y<=this.center.y+halfY;y++){
             for(let x=Math.floor(this.center.x)-halfX;x<=this.center.x+halfX;x++){
                 const point = {x,y}, p = this.screen(point);
                 if(!this.world.inBounds(point) || !this.visible(p)) continue;
                 // 格子底色按地形类型区分：岩石、铜矿、煤矿、空地棋盘色。
                 const ore = this.world.ore(point);
-                g.fillColor = rgba(this.world.rock(point) ? '#35454f' : ore === 'copper' ? '#5d4937' : ore === 'coal' ? '#33434d' : (x+y)%2 ? '#192832' : '#1c2d37');
-                g.rect(p.x-this.cell/2+1,p.y-this.cell/2+1,this.cell-2,this.cell-2); g.fill();
+                g.fillColor = rgba(this.world.rock(point) ? '#9AAEA0' : ore === 'copper' ? '#DCC5A0' : ore === 'coal' ? '#ABBEB1' : (x+y)%2 ? '#DDE8D5' : '#D8E4CF');
+                const gap=this.selected === 'browse' ? 0 : .6;
+                g.rect(p.x-this.cell/2+gap,p.y-this.cell/2+gap,this.cell-gap*2,this.cell-gap*2); g.fill();
                 if(ore){
                     // 矿石点缀：用两个小圆点暗示矿点位置。
-                    g.fillColor = rgba(ore === 'copper' ? '#a27c52' : '#677984');
+                    g.fillColor = rgba(ore === 'copper' ? '#B47743' : '#4E6670');
                     g.circle(p.x-6,p.y+5,3); g.circle(p.x+5,p.y-4,4); g.fill();
                 }
             }
@@ -472,8 +577,17 @@ export class GameApp extends Component {
                 g.fillColor = rgba(i<120 ? palette.red : palette.amber); g.circle(p.x,p.y,i<120 ? 4 : 1.8); g.fill();
             }
         }
+        for(const marker of this.markers){
+            const p=this.screen(marker.point);
+            marker.node.active=this.visible(p) && (!this.session!.wavesStarted || this.selection?.x === marker.point.x && this.selection?.y === marker.point.y);
+            marker.node.setPosition(Math.max(-this.boardWidth/2+44,Math.min(this.boardWidth/2-44,p.x)),p.y+this.cell*.8,0);
+        }
         // 叠加层：先画炮塔射程圈，再画建造/拆除预览。
         const o = this.overlay; o.clear();
+        if(this.successPoint && this.successTime>0){
+            const p=this.screen(this.successPoint);
+            if(this.visible(p)){ o.strokeColor=rgba(palette.green); o.lineWidth=2; o.circle(p.x,p.y,this.cell*(.5+.45-this.successTime)); o.stroke(); }
+        }
         const focus = this.plans[this.plans.length-1] || (this.selection && this.world.at(this.selection));
         if(focus && (focus.kind === 'turret' || focus.kind === 'heavyTurret')){
             // 逐段裁到视口内，射程提示不能覆盖侧边建造按钮。
@@ -489,11 +603,11 @@ export class GameApp extends Component {
         }
         // 建造预览：合法显示薄荷色，非法显示红色，并按方向画箭头。
         const valid = this.world.checkBuild(this.plans).ok;
-        o.strokeColor = rgba(valid ? palette.mint : palette.red); o.lineWidth = 2;
+        o.strokeColor = rgba(valid ? palette.green : palette.red); o.lineWidth = 2;
         for(const plan of this.plans){
             const p = this.screen(plan); if(!this.visible(p)) continue;
             o.rect(p.x-this.cell/2+2,p.y-this.cell/2+2,this.cell-4,this.cell-4); o.stroke();
-            this.arrow(o,p.x,p.y,plan.direction,this.cell*0.24,valid ? palette.mint : palette.red);
+            this.arrow(o,p.x,p.y,plan.direction,this.cell*0.24,valid ? palette.green : palette.red);
         }
         if(this.selection && this.plans.length === 0){
             const p = this.screen(this.selection);
@@ -511,33 +625,16 @@ export class GameApp extends Component {
     // 绘制单个建筑：底色（受击时变红）+ 类型图标 + 血条 + 货物点缀。
     private drawBuilding(g: Graphics, b: Building, p: Point): void {
         const size = this.cell*0.78;
-        g.fillColor = rgba(this.world!.tick-b.lastDamageTick < 6 ? palette.red : definitions[b.kind].color);
-        g.roundRect(p.x-size/2,p.y-size/2,size,size,3); g.fill();
-        g.strokeColor = rgba('#15232d'); g.lineWidth = 2;
-        // 不同建筑类型画不同图标：核心方框、钻头叉、十字路口、合成/路由圆、炮塔炮管等。
-        if(b.kind === 'core'){
-            g.rect(p.x-size*0.28,p.y-size*0.28,size*0.56,size*0.56); g.stroke();
-            g.fillColor = rgba('#e5fff3'); g.circle(p.x,p.y,size*0.12); g.fill();
-        }else if(b.kind === 'drill'){
-            g.moveTo(p.x-size*0.3,p.y-size*0.3); g.lineTo(p.x+size*0.3,p.y+size*0.3);
-            g.moveTo(p.x+size*0.3,p.y-size*0.3); g.lineTo(p.x-size*0.3,p.y+size*0.3); g.stroke();
-            const v = vectors[b.direction];
-            this.arrow(g,p.x+v.x*size*.32,p.y+v.y*size*.32,b.direction,size*.16,'#fff4d8');
-        }else if(b.kind === 'junction'){
-            g.moveTo(p.x-size*.4,p.y);g.lineTo(p.x+size*.4,p.y);g.moveTo(p.x,p.y-size*.4);g.lineTo(p.x,p.y+size*.4);g.stroke();
-        }else if(b.kind === 'crafter' || b.kind === 'router'){
-            g.circle(p.x,p.y,size*0.26); g.stroke();
-        }else if(b.kind === 'turret' || b.kind === 'heavyTurret'){
-            const scale = b.kind === 'heavyTurret' ? 0.34 : 0.27;
-            g.circle(p.x,p.y,size*scale); g.stroke();
-            g.moveTo(p.x,p.y); g.lineTo(p.x+size*.38,p.y); g.stroke();
-            // 空弹炮塔画感叹号提示玩家补弹。
-            if(b.cargo.length === 0){
-                g.strokeColor = rgba(palette.amber);
-                g.moveTo(p.x,p.y-4); g.lineTo(p.x,p.y+4); g.stroke();
-                g.fillColor = rgba(palette.amber); g.circle(p.x,p.y-7,1.5); g.fill();
-            }
-        }else this.arrow(g,p.x,p.y,b.direction,size*0.27,'#203746');
+        buildingIcon(g,b.kind,p.x,p.y,size,b.direction);
+        if(this.world!.tick-b.lastDamageTick < 6){
+            g.strokeColor=rgba(palette.red); g.lineWidth=3;
+            g.roundRect(p.x-size/2,p.y-size/2,size,size,4); g.stroke();
+        }
+        if((b.kind === 'turret' || b.kind === 'heavyTurret') && b.cargo.length === 0){
+            g.fillColor=rgba(palette.panel); g.circle(p.x+size*.34,p.y+size*.34,5); g.fill();
+            g.strokeColor=rgba(palette.amber); g.lineWidth=2;
+            g.moveTo(p.x+size*.34,p.y+size*.24); g.lineTo(p.x+size*.34,p.y+size*.43); g.stroke();
+        }
         // 血条：不满血时显示在建筑下方。
         if(b.health < definitions[b.kind].health){
             g.fillColor = rgba(palette.red); g.rect(p.x-size/2, p.y+size/2+2, size, 3); g.fill();
@@ -547,7 +644,7 @@ export class GameApp extends Component {
         const count = Math.min(3,b.cargo.length+b.output);
         for(let i=0;i<count;i++){
             const item = b.cargo[i]?.item || 'graphite';
-            g.fillColor = rgba(item === 'copper' ? '#ffd99e' : item === 'coal' ? '#111b23' : '#dbf4ee');
+            g.fillColor = rgba(item === 'copper' ? '#B96D35' : item === 'coal' ? '#263F4A' : '#667D89');
             g.circle(p.x-6+i*6,p.y-size*0.32,2);g.fill();
         }
     }
@@ -564,7 +661,7 @@ export class GameApp extends Component {
     update(delta: number): void {
         if(!this.world) return;
         const start = performance.now();
-        const steps = this.session!.advance(delta, result => { this.say(result.message); this.describe(); });
+        const steps = this.session!.advance(delta, result => this.commandResult(result));
         // 只在教学门槛第一次达成时提示，避免每个渲染帧重复覆盖玩家操作反馈。
         if(!this.lastWavesStarted && this.session!.wavesStarted){
             this.lastWavesStarted = true;
@@ -577,6 +674,9 @@ export class GameApp extends Component {
         if(this.stepSamples.length > 600) this.stepSamples.shift();
         if(!this.session!.clock.paused) this.elapsed += delta;
         this.renderTime += delta; this.metricTime += delta;
+        this.successTime=Math.max(0,this.successTime-delta);
+        this.toastTime=Math.max(0,this.toastTime-delta);
+        if(this.statusLabel) this.statusLabel.node.active=this.toastTime>0;
         // 渲染节流：每 50ms 重绘一次世界与 HUD，避免高帧率无谓重绘。
         if(this.renderTime >= 0.05){ this.renderTime=0; this.drawWorld(); this.refreshHUD(); }
         // 每秒刷新一次性能指标：帧 P95 与逻辑 P95。
@@ -589,69 +689,148 @@ export class GameApp extends Component {
 
     // 刷新顶部建材、暂停按钮、开始防守按钮，以及目标/战况文本。
     private refreshHUD(): void {
-        const world = this.world!;
-        // 顶部库存：教学/十字路口显示铜与备战入库；其它显示铜/煤/石墨。
-        this.inventoryLabel!.string = world.map.tutorial || this.crossroads ? `建材铜 ${world.inventory.copper}${world.preparationRemaining('copper') !== undefined ? `\n备战入库 ${world.delivered.copper}/${world.map.preparation!.deliveryLimit.copper} · 开战解除` : ''}` : `铜 ${world.inventory.copper}    煤 ${world.inventory.coal}    石墨 ${world.inventory.graphite}`;
-        this.pauseLabel!.string = this.session!.outcome !== 'playing' ? '重开' : this.session!.clock.paused ? '继续' : '暂停';
-        const session = this.session!;
-        // 教学关胜利后才显示「体验第二关」按钮。
-        if(this.nextLevelLabel) this.nextLevelLabel.node.parent!.active = session.outcome === 'victory';
-        // 手动开始防守按钮：达标前显示提示文字与弱化色，达标后切换为开始防守。
-        if(this.startLabel){
-            this.startLabel.node.parent!.active = !session.wavesStarted;
-            this.startLabel.string = session.canStartDefense ? '开始防守 →' : '先完成供给目标';
-            this.startLabel.color = rgba(session.canStartDefense ? palette.mint : palette.muted);
+        if(!this.lifeLabel) return;
+        const world=this.world!, session=this.session!, waves=session.waves;
+        this.lifeLabel.string=`核心 ${session.enemies.core.health}/${definitions.core.health}`;
+        this.lifeLabel.color=rgba(session.enemies.core.health<definitions.core.health*.3 ? palette.red : palette.ink);
+        this.inventoryLabel!.string=world.map.tutorial || this.crossroads ? `铜 ${world.inventory.copper}` : `铜 ${world.inventory.copper}\n煤 ${world.inventory.coal} · 石墨 ${world.inventory.graphite}`;
+        this.pauseLabel!.string=session.clock.paused ? '继续' : '暂停';
+        this.phaseLabel!.string=session.clock.paused ? 'Ⅱ 已暂停 · 可调整建设' : session.wavesStarted ? '防守中 · 随时可暂停建设' : '准备阶段 · 建立供给后开战';
+        this.startLabel!.node.parent!.active=!!world.map.waveStart?.manual && !session.wavesStarted && session.outcome === 'playing';
+        this.startLabel!.string=session.canStartDefense ? session.clock.paused ? '开始防守并继续' : '开始防守 →' : '完成供给后开战';
+        this.buttons.get(this.startLabel!)?.setState(session.canStartDefense && this.pendingAction === undefined);
+        const hints: Record<string,string>={mine:'① 在铜矿上建造钻头',deliver:'② 铺设传送带，将铜送入核心',supply:'③ 建造炮塔，并连接铜供弹线',ready:'✓ 供给就绪，可以开始防守'};
+        if(!session.wavesStarted){
+            const stage=session.tutorialStage;
+            this.objectiveLabel!.string=`当前目标\n${stage ? hints[stage] || '建立供给' : '连接核心与炮塔，准备防线'}`;
+        }else if(waves.waves.length){
+            const next=waves.waves[waves.waveIndex];
+            this.objectiveLabel!.string=waves.complete ? `清除剩余敌人 ${session.enemies.enemies.size}`
+                : `波次 ${waves.waveIndex+1}/${waves.waves.length} · ${next.enemy === 'fast' ? '快速' : next.enemy === 'armored' ? '重甲' : '普通'} ×${next.count}\n下次出生 ${(waves.remainingTicks/20).toFixed(1)} 秒`;
+        }else this.objectiveLabel!.string=this.stress ? '性能实验 · 合成负载' : `供给目标\n核心铜 ${Math.min(10,world.delivered.copper)}/10 · 石墨 ${Math.min(3,world.produced.graphite)}/3`;
+        let empty=0;
+        for(const b of world.buildings.values()) if((b.kind === 'turret' || b.kind === 'heavyTurret') && !b.cargo.length) empty++;
+        this.alertLabel!.node.parent!.active=empty>0;
+        this.alertLabel!.string=`! 空弹炮塔 ${empty} · 定位`;
+        this.describe();
+        if(session.outcome !== 'playing' && !this.resultShown){ this.resultShown=true; this.showResult(); }
+    }
+
+    private locateEmptyTurret(): void {
+        const buildings=[...this.world!.buildings.values()].filter(b => (b.kind === 'turret' || b.kind === 'heavyTurret') && !b.cargo.length);
+        if(!buildings.length) return;
+        const index=buildings.findIndex(b => this.selection?.x === b.x && this.selection?.y === b.y);
+        const b=buildings[(index+1)%buildings.length];
+        this.choose('browse'); this.selection={x:b.x,y:b.y}; this.center={x:b.x,y:b.y};
+        this.drawTerrain(); this.describe();
+    }
+
+    private showGoals(): void {
+        this.session!.clock.pause(); this.processPaused();
+        const world=this.world!, session=this.session!, ammo=session.turretAmmo(), condition=world.map.waveStart;
+        const lines=['供给目标'];
+        for(const item of items){
+            if(condition?.delivered?.[item]) lines.push(`核心累计入库 ${itemNames[item]}：${world.delivered[item]} / ${condition.delivered[item]}`);
+            if(condition?.ammo?.[item]) lines.push(`炮塔真实弹药 ${itemNames[item]}：${ammo[item]} / ${condition.ammo[item]}`);
         }
-        // 目标文本按阶段/模式分发：教学提示 / 压力测试 / 备战目标 / 战况 / 自由目标。
-        if(session.tutorialStage && !session.wavesStarted){
-            const hints: Record<string, string> = {
-                mine: '① 首次生产：在棕色铜矿上建钻头，箭头为输出方向',
-                deliver: '① 核心需要建材：沿钻头输出方向铺带，把铜送入绿色核心',
-                supply: '② 自选炮位并接铜线：黄圈是射程，红圈是敌人入口；炮塔 ! 表示缺弹',
-                ready: `③ 供给已建立：开始防守后 ${(world.map.waves![0].delayTicks/20).toFixed(0)} 秒来敌，解除备战入库限制`
-            };
-            this.objectiveLabel!.string = hints[session.tutorialStage];
-        }else if(this.stress) this.objectiveLabel!.string = `压力原型 · ${world.buildings.size} 建筑 · 120 移动标记 · 240 子弹标记`;
-        else if(world.map.waves?.length){
-            const session = this.session!, waves = session.waves;
-            if(!session.wavesStarted){
-                // 备战阶段：列出核心入库与各类弹药达标情况。
-                const condition = world.map.waveStart!, ammo = session.turretAmmo();
-                const goals: string[] = [];
-                for(const item of items){
-                    if(condition.delivered?.[item]) goals.push(`核心${itemNames[item]} ${Math.min(world.delivered[item], condition.delivered[item]!)}/${condition.delivered[item]}`);
-                    if(condition.ammo?.[item]) goals.push(`${itemNames[item]}弹药 ${Math.min(ammo[item], condition.ammo[item]!)}/${condition.ammo[item]}`);
-                }
-                this.objectiveLabel!.string = `备战 · ${goals.join(' · ')}${condition.manual ? ' · 达标后点击开始防守' : ''}`;
-            }else this.objectiveLabel!.string = session.outcome === 'defeat' ? '战斗失败 · 核心已被摧毁 · 点击「重开」再次挑战'
-                : session.outcome === 'victory' ? `战斗胜利 · 核心 ${session.enemies.core.health}/600 · 击杀 ${session.combat.kills} · 耗弹 ${session.combat.shots} · 可重开改进布局`
-                : `核心 ${session.enemies.core.health} · 敌人 ${session.enemies.enemies.size}/120 · 击杀 ${session.combat.kills} · ${waves.complete ? '全部敌人已出生' : `波次 ${waves.waveIndex+1}/${waves.waves.length} ${waves.waves[waves.waveIndex].enemy === 'fast' ? '快速' : waves.waves[waves.waveIndex].enemy === 'armored' ? '重甲' : '普通'} ×${waves.waves[waves.waveIndex].count} · 下次出生 ${(waves.remainingTicks/20).toFixed(1)}秒`}`;
-        }else {
-            // 自由模式目标：铜入核心 10 与生产石墨 3。
-            const copper = Math.min(10,world.delivered.copper), graphite = Math.min(3,world.produced.graphite);
-            this.objectiveLabel!.string = `目标 ① 铜送入核心 ${copper}/10    ② 生产石墨 ${graphite}/3${copper===10&&graphite===3 ? '    ✓ 供给链已建立' : ''}`;
+        const cap=world.map.preparation?.deliveryLimit.copper;
+        if(cap && !session.wavesStarted) lines.push(world.preparationRemaining('copper') === 0 ? '核心暂时停收，继续准备炮塔供弹' : `准备阶段核心最多累计接收 ${cap} 铜`, '开战后解除接收上限');
+        if(session.wavesStarted) lines.push(`空弹可点击地图告警定位`, `被毁建筑 ${world.lostBuildings}（不含主动拆除）`);
+        lines.push('单指拖动浏览 · 双指平移缩放');
+        this.dialog('任务与操作',lines.join('\n'),[{text:'返回建设',action:() => this.closeModal()}]);
+    }
+
+    private openMenu(): void {
+        this.session!.clock.pause(); this.processPaused();
+        this.dialog('已暂停','当前战斗进度不会保存。\n关闭菜单后可在暂停状态调整建设。',[
+            {text:'继续游戏',action:() => { this.closeModal(); if(this.session!.outcome === 'playing') this.session!.clock.resume(); }},
+            {text:'重开本关',action:() => this.confirmLeave('Battle')},
+            {text:'返回主菜单',action:() => this.confirmLeave('Menu')},
+            {text:'返回建设',action:() => this.closeModal()}
+        ]);
+    }
+
+    private confirmLeave(scene: string): void {
+        this.dialog(scene === 'Battle' ? '重开本关？' : '离开本局？','当前战斗进度不会保存。',[
+            {text:'确认',action:() => this.go(scene)}, {text:'取消',action:() => this.openMenu()}
+        ]);
+    }
+
+    private showResult(): void {
+        const session=this.session!;
+        const actions=[{text:'重试本关',action:() => this.go('Battle')},{text:'返回主菜单',action:() => this.go('Menu')}];
+        if(session.outcome === 'victory' && this.world!.map.tutorial) actions.unshift({text:'进入第二关 →',action:() => {
+            this.platform.write('supply.mode','crossroads'); this.go('Battle');
+        }});
+        this.dialog(session.outcome === 'victory' ? '防守成功！' : '核心已被摧毁',
+            `核心生命 ${session.enemies.core.health} / ${definitions.core.health}\n击杀 ${session.combat.kills} · 耗弹 ${session.combat.shots}\n被毁建筑 ${this.world!.lostBuildings}`,actions);
+    }
+
+    private closeModal(): void { this.modal?.destroy(); this.modal=undefined; }
+
+    private dialog(title: string, message: string, actions: Array<{text:string;action:()=>void}>): void {
+        this.closeModal();
+        const root=this.uiRoot!;
+        this.modal=this.rect(root,'Modal backdrop',0,0,this.width,this.height,'#263F4ADD'); this.blockInput(this.modal);
+        const width=Math.min(520,this.width-this.safeLeft-this.safeRight-32);
+        const height=Math.min(this.height-this.safeTop-this.safeBottom-24,440);
+        const card=this.rect(this.modal,'Dialog',0,0,width,height,palette.panel);
+        this.text(card,title,0,height/2-36,26,palette.ink,width-32,40);
+        const rows=Math.ceil(actions.length/2), textHeight=height-102-rows*60;
+        this.text(card,message,0,rows*30-14,18,palette.muted,width-40,textHeight);
+        actions.forEach((action,i) => {
+            const pair=actions.length === 1, w=pair ? width-40 : (width-52)/2;
+            this.button(action.text,pair ? 0 : (i%2 ? 1 : -1)*(w+12)/2,-height/2+36+Math.floor(i/2)*60,w,48,action.action,
+                i===0 ? palette.mint : palette.panel,i===0 ? palette.white : palette.ink,card);
+        });
+    }
+
+    private blockInput(node: Node): void {
+        for(const type of [Node.EventType.TOUCH_START,Node.EventType.TOUCH_MOVE,Node.EventType.TOUCH_END,Node.EventType.TOUCH_CANCEL]){
+            node.on(type,(event: EventTouch) => { event.propagationStopped=true; });
         }
-        // 战斗中追加空弹炮塔数与被毁建筑数，提示玩家调整供给与防线。
-        if(!this.stress && session.wavesStarted && session.outcome === 'playing'){
-            let empty = 0;
-            for(const building of world.buildings.values()){
-                if((building.kind === 'turret' || building.kind === 'heavyTurret') && building.cargo.length === 0) empty++;
-            }
-            this.objectiveLabel!.string += `\n空弹炮塔 ${empty} · 被毁建筑 ${world.lostBuildings} · 可暂停调整供给和防线`;
-        }
-        // 浏览/拆除模式下有选中时同步刷新检视面板。
-        if((this.selected==='browse' || this.selected==='remove') && this.selection) this.describe();
     }
 
     // 提交命令到会话：战斗已结束则拒绝，否则入队并按暂停状态提示执行时机。
     private submit(command: Command): boolean {
-        if(this.session!.outcome !== 'playing'){ this.say(this.session!.outcome === 'victory' ? '战斗已经胜利，请重开。' : '核心已被摧毁，请重开。'); return false; }
-        this.session!.enqueue(command);
-        this.say(this.session!.clock.paused ? '操作已排队，点击「继续」后执行。' : '操作已提交');
+        const session=this.session!;
+        if(session.outcome !== 'playing'){ this.say(session.outcome === 'victory' ? '战斗已经胜利，请重开。' : '核心已被摧毁，请重开。'); return false; }
+        if(this.pendingAction !== undefined) return false;
+        this.pendingPlans=command.type === 'build' ? command.plans.map(p => ({...p})) : [];
+        this.pendingAction=session.enqueue(command);
+        this.say('操作已提交');
+        if(session.clock.paused){
+            const sequence=this.pendingAction;
+            const results=session.flushPaused();
+            const result=results.find(r => r.sequence === sequence);
+            for(const entry of results) this.commandResult(entry);
+            if(command.type === 'startDefense' && result?.ok) session.clock.resume();
+            this.drawTerrain(); this.drawWorld();
+            return !!result?.ok;
+        }
         return true;
     }
-    // 更新底部状态提示文本。
-    private say(message: string): void { if(this.statusLabel) this.statusLabel.string = message; }
+
+    private processPaused(): void {
+        if(!this.session) return;
+        for(const result of this.session.flushPaused()) this.commandResult(result);
+    }
+
+    private commandResult(result: CommandResult): void {
+        if(result.sequence === this.pendingAction){
+            this.pendingAction=undefined;
+            if(result.ok){
+                if(this.pendingPlans.length){ this.successPoint=this.pendingPlans[this.pendingPlans.length-1]; this.successTime=.45; this.plans=[]; }
+            }else if(this.pendingPlans.length) this.plans=this.pendingPlans;
+            this.pendingPlans=[];
+        }
+        this.say(result.message); this.describe();
+    }
+
+    private say(message: string): void {
+        if(this.statusLabel){ this.statusLabel.string=message; if(this.statusLabel.node) this.statusLabel.node.active=true; }
+        this.toastTime=4;
+    }
     // 创建一个具有指定尺寸的 UI 节点并挂到 parent 下。
     private make(parent:Node,name:string,x:number,y:number,width:number,height:number):Node {
         const node=new Node(name);node.layer=Layers.Enum.UI_2D;node.setParent(parent);node.setPosition(x,y,0);
@@ -667,14 +846,15 @@ export class GameApp extends Component {
         const label=this.make(parent,'Text',x,y,width,height).addComponent(Label);
         label.string=value;label.fontSize=size;label.lineHeight=size*1.45;label.color=rgba(color);
         label.horizontalAlign=HorizontalTextAlignment.CENTER;label.verticalAlign=Label.VerticalAlign.CENTER;
-        label.overflow=Label.Overflow.SHRINK;label.enableWrapText=true;return label;
+        label.overflow=Label.Overflow.CLAMP;label.enableWrapText=true;return label;
     }
     // 创建按钮：底色矩形 + 文本 + 触摸结束回调，返回内部 Label 便于后续更新文字/颜色。
-    private button(value:string,x:number,y:number,width:number,height:number,callback:()=>void,color=palette.border,ink=palette.ink):Label {
-        const node=this.rect(this.node,value,x,y,width,height,color);
-        const label=this.text(node,value,0,0,19,ink,width-10,height-4);
-        node.on(Node.EventType.TOUCH_END,(event:EventTouch)=>{event.propagationStopped=true;callback();});return label;
+    private button(value:string,x:number,y:number,width:number,height:number,callback:()=>void,color=palette.panel,ink=palette.ink,parent=this.uiRoot || this.node):Label {
+        const node=this.rect(parent,value,x,y,width,height,color);
+        const label=this.text(node,value,0,0,18,ink,width-12,height-4);
+        this.buttons.set(label,new GameButton(label,color,ink,callback));
+        return label;
     }
     // 组件销毁：标记已销毁、清理平台回调、取消所有调度。
-    onDestroy(): void { this.disposed=true;this.cleanup?.();this.unscheduleAllCallbacks(); }
+    onDestroy(): void { this.disposed=true;this.cleanup?.();view.off('canvas-resize',this.resized,this);this.unscheduleAllCallbacks(); }
 }

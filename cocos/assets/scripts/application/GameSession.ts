@@ -54,7 +54,7 @@ export class GameSession {
             ? {type: 'build', plans: command.plans.map(plan => ({...plan}))}
             : command.type === 'startDefense' ? {type: 'startDefense'}
             : {type: command.type, point: {...command.point}};
-        this.pending.push({sequence, command: copy});
+        if(this.outcome === 'playing') this.pending.push({sequence, command: copy});
         return sequence;
     }
 
@@ -62,14 +62,7 @@ export class GameSession {
         if(this.outcome !== 'playing') return 0;
         const results: CommandResult[] = [];
         const steps = this.clock.advance(delta, () => {
-            const commands = this.pending;
-            this.pending = [];
-            for(const {sequence, command} of commands){
-                const result = command.type === 'build' ? this.world.build(command.plans)
-                    : command.type === 'startDefense' ? this.startDefense()
-                    : command.type === 'rotate' ? this.world.rotate(command.point) : this.world.remove(command.point);
-                results.push({...result, sequence, tick: this.world.tick + 1});
-            }
+            results.push(...this.executePending(this.world.tick + 1));
             this.world.step(!this.wavesStarted);
             // 教学关先检查真实物流成果，条件满足后的下一阶段才允许推进波次游标。
             if(!this.wavesStarted && !this.world.map.waveStart?.manual && this.checkWaveStart()) this.wavesStarted = true;
@@ -85,6 +78,24 @@ export class GameSession {
         // Presentation callbacks cannot influence another step in the same frame.
         for(const result of results) report?.(result);
         return steps;
+    }
+
+    /** UI pause operations use the same FIFO validation without advancing simulation. */
+    flushPaused(): CommandResult[] {
+        if(this.outcome !== 'playing'){ this.pending = []; return []; }
+        if(!this.clock.paused) return [];
+        return this.executePending(this.world.tick);
+    }
+
+    private executePending(tick: number): CommandResult[] {
+        const commands = this.pending;
+        this.pending = [];
+        return commands.map(({sequence, command}) => {
+            const result = command.type === 'build' ? this.world.build(command.plans)
+                : command.type === 'startDefense' ? this.startDefense()
+                : command.type === 'rotate' ? this.world.rotate(command.point) : this.world.remove(command.point);
+            return {...result, sequence, tick};
+        });
     }
 
     /** 开战命令执行时重新检查实际库存，拆炮或命令排队不能绕过门槛。 */

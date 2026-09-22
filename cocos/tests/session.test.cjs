@@ -147,3 +147,28 @@ test('wave start config rejects empty, negative and wave-less conditions', () =>
     assert.throws(() => validateMap({...map(), waves: [wave()], waveStart: {ammo: {coal: 1}}}), /炮塔不能使用煤/);
     assert.throws(() => validateMap({...map(), waves: [wave()], waveStart: {delivered: {unknown: 1, copper: 1}}}), /未知资源/);
 });
+
+test('paused FIFO edits apply at current tick without advancing any simulation state or replaying', () => {
+    const session = new GameSession({...map(), waves: [wave({delayTicks: 100})]});
+    session.enqueue(build()); // Existing step-boundary command must run first.
+    session.clock.pause();
+    session.enqueue({type:'rotate', point:{x:1,y:1}});
+    session.enqueue(build()); // Revalidated against the earlier build.
+    const before = {tick:session.world.tick, remaining:session.waves.remainingTicks, shots:session.combat.shots};
+    const results = session.flushPaused();
+    assert.deepEqual(results.map(r => [r.sequence,r.tick,r.ok]), [[1,0,true],[2,0,true],[3,0,false]]);
+    assert.equal(session.world.at({x:1,y:1}).direction, 1);
+    assert.equal(session.world.inventory.copper, 19);
+    session.advance(600);
+    assert.deepEqual({tick:session.world.tick, remaining:session.waves.remainingTicks, shots:session.combat.shots},before);
+    assert.equal(session.enemies.enemies.size,0);
+    assert.deepEqual(session.flushPaused(),[]);
+    session.enqueue({type:'remove',point:{x:1,y:1}});
+    assert.equal(session.flushPaused()[0].ok,true);
+    assert.equal(session.world.at({x:1,y:1}),undefined);
+    session.clock.resume(); session.advance(.05);
+    assert.equal(session.world.inventory.copper,19);
+    session.outcome='victory'; session.clock.pause(); session.enqueue(build());
+    assert.deepEqual(session.flushPaused(),[]);
+    assert.equal(session.world.at({x:1,y:1}),undefined);
+});
