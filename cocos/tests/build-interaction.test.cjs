@@ -16,6 +16,8 @@ vm.runInNewContext(compiled, {
     exports: moduleStub.exports,
     require(name){
         if(name === 'cc') return {Component: class {}, _decorator: {ccclass: () => value => value, property: () => {}}};
+        if(name === './BattleLayout') return {};
+        if(name === './GameArt') return {};
         if(name === './GameWidgets') return {palette: {}, rgba: value => value};
         if(name === '../platform/PlatformService') return {PlatformService: class {}};
         return require(path.join(__dirname, '../.test-build', name.replace('../', '')));

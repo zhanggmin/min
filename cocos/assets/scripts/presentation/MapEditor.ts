@@ -3,6 +3,8 @@ import {_decorator, Color, Component, director, EventTouch, Graphics, Horizontal
     Label, Layers, Node, ResolutionPolicy, resources, UITransform, Vec3, view} from 'cc';
 import {BuildPlan, BuildingKind, definitions, Item, itemNames, items, Point, vectors} from '../domain/Content';
 import {MapData, validateMap} from '../domain/MapData';
+import {PlatformService} from '../platform/PlatformService';
+import {ArtLayer, buildingAngle, loadGameArt} from './GameArt';
 
 const {ccclass} = _decorator;
 // 复用 GameApp 的色板与工具函数，保持编辑器与战斗界面视觉一致。
@@ -27,6 +29,8 @@ export class MapEditor extends Component {
     private tool: Tool = 'rock';                            // 当前工具
     private direction = 0;                                  // 建筑方向（0-3 顺时针）
     private board?: Node;                                   // 视口节点
+    private terrainArt?: ArtLayer;
+    private worldArt?: ArtLayer;
     private terrain?: Graphics;                             // 地形层
     private drawing?: Graphics;                             // 建筑层
     private overlay?: Graphics;                             // 预览/光标层
@@ -43,13 +47,32 @@ export class MapEditor extends Component {
     private disposed = false;                              // 已销毁
     private toolbarLabels: Array<{tool: Tool; label: Label}> = []; // 工具按钮与其类型，用于高亮
 
+    private portrait = false;
+    private width = 1200;
+    private height = 720;
+    private halfX = 426;
+    private halfY = 240;
+    private top = 360;
+    private bottom = -360;
+
     onLoad(): void {
-        view.setDesignResolutionSize(1200, 720, ResolutionPolicy.SHOW_ALL);
+        const frame = view.getFrameSize();
+        this.portrait = frame.height > frame.width;
+        if(this.portrait){
+            this.width = 600; this.height = 600*frame.height/Math.max(1,frame.width);
+            const safe = new PlatformService().safeInsets(), scale = 600/Math.max(1,frame.width);
+            this.top = this.height/2-safe.top*scale;
+            this.bottom = -this.height/2+safe.bottom*scale;
+            this.halfX = 280; this.halfY = Math.max(100,(this.top-this.bottom-576)/2);
+        }
+        view.setDesignResolutionSize(this.width, this.height, ResolutionPolicy.SHOW_ALL);
         this.newMap();
     }
 
-    start(): void {
-        this.rect(this.node, 'Background', 0, 0, 1200, 720, palette.bg);
+    async start(): Promise<void> {
+        await loadGameArt();
+        if(this.disposed) return;
+        this.rect(this.node, 'Background', 0, 0, this.width, this.height, palette.bg);
         this.editorUI();
     }
 
@@ -82,6 +105,7 @@ export class MapEditor extends Component {
 
     // 搭建编辑器界面：顶部工具条、视口、右侧建筑面板、底部地形工具栏。
     private editorUI(): void {
+        if(!this.portrait){
         this.text(this.node, '关卡编辑器', -468, 306, 29, palette.ink, 220);
         this.button('菜单', 514, 306, 100, 46, () => director.loadScene('Menu'));
         this.button('新建', 200, 306, 90, 46, () => { this.newMap(); this.refreshAll(); this.say('已新建空地图'); });
@@ -89,17 +113,22 @@ export class MapEditor extends Component {
         this.button('校验', 418, 306, 80, 46, () => this.validate());
         this.button('导出', 488, 306, 80, 46, () => this.export(), palette.mint, palette.bg);
         this.infoLabel = this.text(this.node, '', -138, 248, 19, palette.muted, 850);
+        }
         // 视口：三层 Graphics，触摸交互统一在 board 处理。
-        this.board = this.make(this.node, 'Viewport', -138, -17, 852, 480);
-        this.terrain = this.make(this.board, 'Terrain', 0, 0, 852, 480).addComponent(Graphics);
-        this.drawing = this.make(this.board, 'Buildings', 0, 0, 852, 480).addComponent(Graphics);
-        this.overlay = this.make(this.board, 'Overlay', 0, 0, 852, 480).addComponent(Graphics);
+        this.board = this.make(this.node, 'Viewport', this.portrait ? 0 : -138, this.portrait ? this.top-160-this.halfY : -17, this.halfX*2, this.halfY*2);
+        this.rect(this.board, 'World ground', 0, 0, this.halfX*2, this.halfY*2, '#272E2D');
+        this.terrainArt = new ArtLayer(this.board, 'Terrain artwork');
+        this.terrain = this.make(this.board, 'Terrain', 0, 0, this.halfX*2, this.halfY*2).addComponent(Graphics);
+        this.worldArt = new ArtLayer(this.board, 'World artwork');
+        this.drawing = this.make(this.board, 'Buildings', 0, 0, this.halfX*2, this.halfY*2).addComponent(Graphics);
+        this.overlay = this.make(this.board, 'Overlay', 0, 0, this.halfX*2, this.halfY*2).addComponent(Graphics);
         this.board.on(Node.EventType.TOUCH_START, this.touchStart, this);
         this.board.on(Node.EventType.TOUCH_MOVE, this.touchMove, this);
         this.board.on(Node.EventType.TOUCH_END, this.touchEnd, this);
         this.board.on(Node.EventType.TOUCH_CANCEL, () => {
             this.dragStart = undefined; this.lastPaint = undefined; this.gesture = true; this.pinchDistance = 0;
         }, this);
+        if(this.portrait){ this.portraitControls(); this.refreshAll(); return; }
         // 右侧面板：建筑工具垂直列表 + 方向旋转 + 地图属性。
         this.rect(this.node, 'Panel', 440, -5, 252, 504, palette.panel);
         this.text(this.node, '建筑工具', 440, 230, 22, palette.ink, 220);
@@ -150,6 +179,39 @@ export class MapEditor extends Component {
             '选择工具，点击或拖动地图放置。双指缩放浏览。完成后点「校验」再「导出」。',
             -138, -270, 16, palette.amber, 850);
         this.refreshAll();
+    }
+
+    private portraitControls(): void {
+        this.text(this.node, '关卡编辑器', -140, this.top-32, 26, palette.ink, 280, 44);
+        this.button('菜单', 230, this.top-32, 100, 44, () => director.loadScene('Menu'));
+        const actions = [
+            {name:'新建', run:() => { this.newMap(); this.refreshAll(); }},
+            {name:'加载示例', run:() => this.loadSample()},
+            {name:'校验', run:() => this.validate()}, {name:'导出', run:() => this.export()}
+        ];
+        actions.forEach((a,i) => this.button(a.name,-210+i*140,this.top-84,128,44,a.run));
+        this.infoLabel=this.text(this.node,'',0,this.top-132,16,palette.muted,560,44);
+        this.toolLabel=this.text(this.node,'',-180,this.bottom+390,18,palette.mint,180,32);
+        this.statusLabel=this.text(this.node,'双指缩放浏览，单指绘制',80,this.bottom+390,14,palette.amber,360,36);
+        const tools: Array<{tool:Tool;name:string}> = [...terrainTools,...buildingKinds.map(tool => ({tool,name:definitions[tool].name}))];
+        tools.forEach((entry,i) => {
+            const label=this.button(entry.name,-224+i%5*112,this.bottom+344-Math.floor(i/5)*48,104,42,() => this.choose(entry.tool));
+            label.fontSize=16; this.toolbarLabels.push({tool:entry.tool,label});
+        });
+        const controls = [
+            {name:'旋转',run:() => { this.direction=(this.direction+1)%4; this.say(`方向：${arrows[this.direction]}`); }},
+            {name:'－',run:() => this.zoom(-4)}, {name:'＋',run:() => this.zoom(4)},
+            {name:'归位',run:() => { this.center={x:this.map.width/2,y:this.map.height/2}; this.refreshAll(); }},
+            {name:'清空',run:() => this.clearAll()}
+        ];
+        controls.forEach((a,i) => this.button(a.name,-224+i*112,this.bottom+188,104,42,a.run));
+        ['宽 −','宽 +','高 −','高 +'].forEach((name,i) => this.button(name,-210+i*140,this.bottom+134,128,42,() => this.resize(i<2 ? (i ? 1 : -1) : 0,i>=2 ? (i===3 ? 1 : -1) : 0)));
+        items.forEach((item,i) => {
+            const x=-190+i*190;
+            this.text(this.node,itemNames[item],x,this.bottom+88,16,palette.muted,180,28);
+            this.button('−',x-44,this.bottom+44,80,42,() => this.adjustResource(item,-8));
+            this.button('+',x+44,this.bottom+44,80,42,() => this.adjustResource(item,8));
+        });
     }
 
     // 切换工具并刷新高亮。
@@ -280,7 +342,7 @@ export class MapEditor extends Component {
         this.center.y = Math.max(0, Math.min(this.map.height, this.center.y));
     }
     private screen(p: Point): Point { return {x: (p.x + 0.5 - this.center.x) * this.cell, y: (p.y + 0.5 - this.center.y) * this.cell}; }
-    private visible(p: Point): boolean { return Math.abs(p.x) < 426 - this.cell / 2 && Math.abs(p.y) < 240 - this.cell / 2; }
+    private visible(p: Point): boolean { return Math.abs(p.x) < this.halfX - this.cell / 2 && Math.abs(p.y) < this.halfY - this.cell / 2; }
     private zoom(d: number): void { this.cell = Math.max(16, Math.min(48, this.cell + d)); this.drawTerrain(); }
     private local(event: EventTouch): Vec3 {
         const p = event.getUILocation();
@@ -327,14 +389,15 @@ export class MapEditor extends Component {
     private drawTerrain(): void {
         if(!this.terrain) return;
         const g = this.terrain; g.clear();
-        g.fillColor = rgba('#0b131a'); g.rect(-426, -240, 852, 480); g.fill();
-        const halfX = Math.ceil(426 / this.cell), halfY = Math.ceil(240 / this.cell);
+        this.terrainArt?.begin();
+        const halfX = Math.ceil(this.halfX / this.cell), halfY = Math.ceil(this.halfY / this.cell);
         for(let y = Math.floor(this.center.y) - halfY; y <= this.center.y + halfY; y++){
             for(let x = Math.floor(this.center.x) - halfX; x <= this.center.x + halfX; x++){
                 const point = {x, y}, p = this.screen(point);
                 if(!this.inBounds(point) || !this.visible(p)) continue;
                 const k = this.key(point);
                 const ore = this.ores.get(k);
+                if(this.terrainArt?.draw(this.rocks.has(k) ? 'rock' : ore === 'copper' ? 'copper' : ore === 'coal' ? 'coal' : 'ground', p.x, p.y, this.cell+.25)) continue;
                 g.fillColor = rgba(this.rocks.has(k) ? '#35454f' : ore === 'copper' ? '#5d4937' : ore === 'coal' ? '#33434d' : (x + y) % 2 ? '#192832' : '#1c2d37');
                 g.rect(p.x - this.cell / 2 + 1, p.y - this.cell / 2 + 1, this.cell - 2, this.cell - 2); g.fill();
                 if(ore){
@@ -343,6 +406,7 @@ export class MapEditor extends Component {
                 }
             }
         }
+        this.terrainArt?.end();
         // 出生点：红圈提示。
         for(const s of this.spawns){
             const p = this.screen(this.unkey(s));
@@ -354,11 +418,11 @@ export class MapEditor extends Component {
         g.strokeColor = rgba('#1a2630'); g.lineWidth = 0.5;
         for(let x = Math.floor(this.center.x) - halfX; x <= this.center.x + halfX; x++){
             const p = this.screen({x, y: 0});
-            g.moveTo(p.x - this.cell / 2, -240); g.lineTo(p.x - this.cell / 2, 240);
+            g.moveTo(p.x - this.cell / 2, -this.halfY); g.lineTo(p.x - this.cell / 2, this.halfY);
         }
         for(let y = Math.floor(this.center.y) - halfY; y <= this.center.y + halfY; y++){
             const p = this.screen({x: 0, y});
-            g.moveTo(-426, p.y - this.cell / 2); g.lineTo(426, p.y - this.cell / 2);
+            g.moveTo(-this.halfX, p.y - this.cell / 2); g.lineTo(this.halfX, p.y - this.cell / 2);
         }
         g.stroke();
     }
@@ -367,10 +431,12 @@ export class MapEditor extends Component {
     private drawWorld(): void {
         if(!this.drawing || !this.overlay) return;
         const g = this.drawing; g.clear(); const o = this.overlay; o.clear();
+        this.worldArt?.begin();
         for(const [, b] of this.buildings){
             const p = this.screen(b); if(!this.visible(p)) continue;
             this.drawBuilding(g, b, p);
         }
+        this.worldArt?.end();
         // 光标提示：在最近绘制格上画琥珀色边框。
         if(this.dragStart){
             const p = this.screen(this.dragStart);
@@ -383,6 +449,7 @@ export class MapEditor extends Component {
 
     // 绘制单个建筑：底色 + 类型图标（与 GameApp.drawBuilding 风格一致，但无血条/货物）。
     private drawBuilding(g: Graphics, b: BuildPlan, p: Point): void {
+        if(this.worldArt?.draw(b.kind,p.x,p.y,this.cell*.96,buildingAngle(b.kind,b.direction))) return;
         const size = this.cell * 0.78;
         g.fillColor = rgba(definitions[b.kind].color);
         g.roundRect(p.x - size / 2, p.y - size / 2, size, size, 3); g.fill();

@@ -1,3 +1,20 @@
 {
-  "__version__": "1.3.9"
+  "__version__": "1.3.9",
+  "bundleConfig": {
+    "custom": {
+      "wechatResources": {
+        "displayName": "微信资源分包",
+        "configs": {
+          "native": {"preferredOptions": {"compressionType": "merge_dep", "isRemote": false}},
+          "web": {"preferredOptions": {"compressionType": "merge_dep", "isRemote": false}},
+          "miniGame": {
+            "preferredOptions": {"compressionType": "merge_dep", "isRemote": false},
+            "overwriteSettings": {
+              "wechatgame": {"compressionType": "subpackage", "isRemote": false}
+            }
+          }
+        }
+      }
+    }
+  }
 }

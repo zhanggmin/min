@@ -1,4 +1,4 @@
-import {existsSync, readdirSync, statSync} from 'node:fs';
+import {existsSync, readFileSync, readdirSync, statSync} from 'node:fs';
 import {relative, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
@@ -26,4 +26,20 @@ const size = bytes => bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KiB` :
 console.log(`${platform}: ${files.length} files, ${size(total)}`);
 console.log('Largest files:');
 for(const file of files.slice(0, 20)) console.log(`${size(file.bytes).padStart(10)}  ${file.path}`);
-if(platform === 'wechatgame') console.log(`4 MiB main-package reference: ${total <= 4 * 1024 * 1024 ? 'total output is within it' : 'inspect subpackage layout in WeChat DevTools'}`);
+if(platform === 'wechatgame'){
+    const game = JSON.parse(readFileSync(resolve(output, 'game.json'), 'utf8'));
+    const packages = (game.subpackages || game.subPackages || []).map(pack => ({
+        name: pack.name,
+        root: pack.root.replace(/\/$/, '') + '/'
+    }));
+    const inPackage = (file, pack) => file.path.split('\\').join('/').startsWith(pack.root);
+    const mainBytes = files.filter(file => !packages.some(pack => inPackage(file, pack)))
+        .reduce((sum, file) => sum + file.bytes, 0);
+    console.log(`Main package: ${size(mainBytes)} / 4 MiB`);
+    for(const pack of packages){
+        const bytes = files.filter(file => inPackage(file, pack)).reduce((sum, file) => sum + file.bytes, 0);
+        console.log(`Subpackage ${pack.name}: ${size(bytes)}`);
+    }
+    console.log('Local file sizes; verify final packaged sizes in WeChat DevTools.');
+    if(mainBytes > 4 * 1024 * 1024) process.exitCode = 1;
+}

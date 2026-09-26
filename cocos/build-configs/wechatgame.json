@@ -37,8 +37,8 @@
   ],
   "packages": {
     "wechatgame": {
-      "appid": "wx6ac3f5090a6b99c5",
-      "orientation": "landscape",
+      "appid": "wx9d255116ef5bb429",
+      "orientation": "portrait",
       "separateEngine": false
     }
   }

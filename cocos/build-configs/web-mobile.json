@@ -25,7 +25,7 @@
   "debug": false,
   "sourceMaps": true,
   "md5Cache": false,
-  "orientation": "landscape",
+  "orientation": "portrait",
   "includedModules": [
     "base",
     "2d",
@@ -38,7 +38,7 @@
   ],
   "packages": {
     "web-mobile": {
-      "orientation": "landscape"
+      "orientation": "portrait"
     }
   }
 }

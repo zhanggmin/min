@@ -2,8 +2,8 @@ import {Color, EventTouch, Graphics, Label, Node, UITransform, Vec3} from 'cc';
 import {BuildingKind, vectors} from '../domain/Content';
 
 export const palette = {
-    bg: '#DDE8D5', panel: '#FFF9ED', border: '#CBD8CC', ink: '#263F4A', muted: '#526C70',
-    mint: '#246DA8', amber: '#A65B13', red: '#B94040', green: '#2F7B52', white: '#FFFFFF'
+    bg: '#0C141B', panel: '#172630', border: '#344A57', ink: '#E5F0F2', muted: '#9CB2BE',
+    mint: '#257C8B', amber: '#F1C078', red: '#FA827A', green: '#76DBAE', white: '#FFFFFF'
 };
 export const rgba = (hex: string): Color => new Color().fromHEX(hex);
 
@@ -49,10 +49,10 @@ export class GameButton {
     private paint(pressed = false): void {
         const node = this.label.node.parent!, ui = node.getComponent(UITransform)!, g = node.getComponent(Graphics)!;
         g.clear();
-        g.fillColor = rgba(!this.enabled ? '#E4E9DF' : pressed ? '#B9D8E9' : this.selected ? '#E3F0FB' : this.color);
-        g.roundRect(-ui.width/2, -ui.height/2, ui.width, ui.height, 10); g.fill();
-        g.strokeColor = rgba(this.selected ? palette.mint : palette.border); g.lineWidth = this.selected ? 3 : 1;
-        g.roundRect(-ui.width/2+1, -ui.height/2+1, ui.width-2, ui.height-2, 10); g.stroke();
+        g.fillColor = rgba(!this.enabled ? '#1C2A32' : pressed ? '#365667' : this.selected ? '#284A58' : this.color);
+        g.roundRect(-ui.width/2, -ui.height/2, ui.width, ui.height, 6); g.fill();
+        g.strokeColor = rgba(this.selected ? '#7FE1E0' : palette.border); g.lineWidth = this.selected ? 3 : 1;
+        g.roundRect(-ui.width/2+1, -ui.height/2+1, ui.width-2, ui.height-2, 6); g.stroke();
         this.label.color = rgba(this.enabled ? this.ink : palette.muted);
     }
 }
